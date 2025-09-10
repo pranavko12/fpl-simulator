@@ -1,15 +1,60 @@
 'use client';
 
 import Link from 'next/link';
+import { Clock, PlayCircle, Users } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 export default function LandingPage() {
+  const [showNav, setShowNav] = useState(true);
+  const [lastScrollY, setLastScrollY] = useState(0);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const current = window.scrollY;
+      if (current < 50) {
+        setShowNav(true);
+      } else if (current > lastScrollY) {
+        setShowNav(false); // scrolling down
+      } else {
+        setShowNav(true); // scrolling up
+      }
+      setLastScrollY(current);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [lastScrollY]);
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-gradient-to-b from-slate-50 via-white to-slate-50">
-      {/* Decorative background */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0"
+      {/* Floating NavBar with hide/show on scroll */}
+      <nav
+        className={`fixed top-0 left-0 w-full z-20 bg-white/80 backdrop-blur shadow-sm transition-transform duration-300 ${
+          showNav ? 'translate-y-0' : '-translate-y-full'
+        }`}
+        aria-label="Primary"
       >
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="flex items-center justify-between py-4">
+            <Link href="/" className="text-xl font-extrabold tracking-tight">
+              FPL <span className="text-emerald-700">Simulator</span>
+            </Link>
+            <div className="flex items-center gap-6 text-sm font-medium">
+              <a href="#how-it-works" className="hover:text-emerald-700 transition">
+                How it works
+              </a>
+              <Link
+                href="/simulator"
+                className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-white shadow-sm hover:bg-emerald-700 transition"
+              >
+                Launch App
+              </Link>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      {/* Decorative background */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
         {/* subtle radial light */}
         <div className="absolute -top-40 left-1/2 h-[42rem] w-[42rem] -translate-x-1/2 rounded-full bg-gradient-to-br from-green-300/30 via-teal-200/20 to-blue-300/20 blur-3xl" />
         {/* floating blobs */}
@@ -19,8 +64,8 @@ export default function LandingPage() {
         <div className="absolute inset-0 opacity-[0.04] [background-image:url('data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'120\\' height=\\'120\\' viewBox=\\'0 0 120 120\\'><filter id=\\'n\\'><feTurbulence type=\\'fractalNoise\\' baseFrequency=\\'0.8\\' numOctaves=\\'2\\' stitchTiles=\\'stitch\\'/></filter><rect width=\\'100%\\' height=\\'100%\\' filter=\\'url(%23n)\\' opacity=\\'0.5\\'/></svg>')]"></div>
       </div>
 
-      {/* Content */}
-      <section className="relative mx-auto grid max-w-6xl grid-cols-1 px-6 py-24 md:grid-cols-2 md:gap-10 md:py-32">
+      {/* Hero */}
+      <section className="relative mx-auto grid max-w-6xl grid-cols-1 px-6 pt-28 md:grid-cols-2 md:gap-10 md:pt-36">
         {/* Left: Copy */}
         <div className="flex flex-col justify-center">
           <span className="mb-4 inline-flex w-fit items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
@@ -37,9 +82,8 @@ export default function LandingPage() {
           </h1>
 
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-600">
-            Pick a gameweek, lock your team, and see
-            price changes and points across any range.
-            No login, no fuss—just pure what-if magic.
+            Pick a gameweek, lock your team, and see price changes and points across any
+            range. No login, no fuss—just pure what-if magic.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -57,9 +101,7 @@ export default function LandingPage() {
             </a>
           </div>
 
-          <div className="mt-4 text-xs text-slate-500">
-            Free to use · No account required
-          </div>
+          <div className="mt-4 text-xs text-slate-500">Free to use · No account required</div>
         </div>
 
         {/* Right: Hero card / Preview frame */}
@@ -95,64 +137,63 @@ export default function LandingPage() {
 
             {/* mini bullets */}
             <ul className="mt-4 grid grid-cols-2 gap-2 text-sm text-slate-600">
-              <li className="rounded-lg bg-slate-50 px-3 py-2">
-                ✓ GW→GW price deltas
-              </li>
-              <li className="rounded-lg bg-slate-50 px-3 py-2">
-                ✓ Points in selected range
-              </li>
-              <li className="rounded-lg bg-slate-50 px-3 py-2">
-                ✓ Fast player search
-              </li>
-              <li className="rounded-lg bg-slate-50 px-3 py-2">
-                ✓ Formation friendly
-              </li>
+              <li className="rounded-lg bg-slate-50 px-3 py-2">✓ GW→GW price deltas</li>
+              <li className="rounded-lg bg-slate-50 px-3 py-2">✓ Points in selected range</li>
+              <li className="rounded-lg bg-slate-50 px-3 py-2">✓ Fast player search</li>
+              <li className="rounded-lg bg-slate-50 px-3 py-2">✓ Formation friendly</li>
             </ul>
           </div>
         </div>
       </section>
 
       {/* How it works */}
-      <section
-        id="how-it-works"
-        className="relative mx-auto max-w-6xl px-6 pb-24"
-      >
-        <div className="grid gap-6 md:grid-cols-3">
-          {[
-            {
-              t: '1. Pick a range',
-              d: 'Choose any start and end gameweek—see prices at each endpoint.',
-            },
-            {
-              t: '2. Select players',
-              d: 'Search by name and position. We handle duplicates and benching logic.',
-            },
-            {
-              t: '3. Simulate',
-              d: 'We compute price delta and points scored in that exact window.',
-            },
-          ].map((x) => (
-            <div
-              key={x.t}
-              className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
-            >
-              <div className="text-base font-semibold text-slate-900">{x.t}</div>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">{x.d}</p>
+      <section id="how-it-works" className="relative mx-auto max-w-6xl px-6 pb-24">
+        <h2 className="mb-8 text-center text-2xl md:text-3xl font-extrabold text-slate-900">
+          How it works
+        </h2>
+        <div className="grid gap-8 md:grid-cols-3">
+          {/* Step 1 */}
+          <div className="group relative rounded-2xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40 p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg">
+            <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 group-hover:bg-emerald-200 transition">
+              <Clock className="h-7 w-7 text-emerald-700" />
             </div>
-          ))}
+            <h3 className="text-lg font-semibold text-slate-900">1. Pick a range</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Choose any start and end gameweek—see prices at each endpoint.
+            </p>
+            <div className="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-green-500 opacity-0 group-hover:opacity-100 transition" />
+          </div>
+
+          {/* Step 2 */}
+          <div className="group relative rounded-2xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40 p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg">
+            <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 group-hover:bg-emerald-200 transition">
+              <Users className="h-7 w-7 text-emerald-700" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900">2. Select players</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Search by name and position. We handle duplicates and benching logic.
+            </p>
+            <div className="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-green-500 opacity-0 group-hover:opacity-100 transition" />
+          </div>
+
+          {/* Step 3 */}
+          <div className="group relative rounded-2xl border border-emerald-100 bg-gradient-to-b from-white to-emerald-50/40 p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-lg">
+            <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 group-hover:bg-emerald-200 transition">
+              <PlayCircle className="h-7 w-7 text-emerald-700" />
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900">3. Simulate</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              We compute price delta and points scored in that exact window.
+            </p>
+            <div className="absolute bottom-0 left-0 h-1 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-green-500 opacity-0 group-hover:opacity-100 transition" />
+          </div>
         </div>
       </section>
 
       {/* Footer */}
       <footer className="border-t bg-white/70 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 text-sm text-slate-600">
+        <div className="mx-auto flex max-w-6xl items-center justify-center px-6 py-6 text-sm text-slate-600">
           <div>© {new Date().getFullYear()} FPL Simulator</div>
-          <Link
-            href="/simulator"
-            className="font-semibold text-emerald-700 hover:underline"
-          >
-            Launch Simulator →
-          </Link>
         </div>
       </footer>
     </main>
