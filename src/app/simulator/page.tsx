@@ -7,10 +7,14 @@ import TeamGrid from './../components/TeamGrid';
 import SimulateButton from './../components/SimulateButton';
 import SeasonPicker from './../components/SeasonPicker';
 
-type UiPlayer = { name: string; element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null };
+type UiPlayer = {
+  name: string;
+  element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
+  price?: number | null; // keep price
+};
 
 export default function SimulatorPage() {
-  const [season, setSeason] = useState<string>('2025-2026'); // default; SeasonPicker can override
+  const [season, setSeason] = useState<string>('2025-2026'); // SeasonPicker can override
   const [players, setPlayers] = useState<UiPlayer[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [errorPlayers, setErrorPlayers] = useState<string | null>(null);
@@ -27,13 +31,11 @@ export default function SimulatorPage() {
       })
       .then((data) => {
         const arr = Array.isArray(data?.players) ? data.players : [];
-        // map to just names (keep element_type if available for filtering)
-        const ui = arr.map((p: any) => ({
-          name: (
-            (p.first_name ? `${p.first_name} ` : '') +
-            (p.second_name ?? p.name ?? '')
-          ).trim(),
+        // keep price when mapping
+        const ui: UiPlayer[] = arr.map((p: any) => ({
+          name: p.name ?? '',
           element_type: p.element_type ?? null,
+          price: p.price ?? null,
         }));
         setPlayers(ui);
       })

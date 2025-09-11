@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { readFile, readdir, stat } from 'fs/promises';
 import path from 'path';
 
@@ -11,27 +11,31 @@ function fromRoot(...segments: string[]) {
   return path.join(process.cwd(), ...segments);
 }
 
+/** Normalize to GK/DEF/MID/FWD */
 function normalizeType(raw: any): 'GK' | 'DEF' | 'MID' | 'FWD' | null {
   if (raw == null) return null;
-  if (typeof raw === 'number') return ({ 1: 'GK', 2: 'DEF', 3: 'MID', 4: 'FWD' } as const)[raw] ?? null;
   const s = String(raw).trim().toUpperCase();
-  if (['GK', 'GKP', 'GOALKEEPER'].includes(s)) return 'GK';
-  if (['DEF', 'DEFENDER', 'DEFENDERS'].includes(s)) return 'DEF';
-  if (['MID', 'MIDFIELDER', 'MIDFIELDERS'].includes(s)) return 'MID';
-  if (['FWD', 'FW', 'FORWARD', 'FORWARDS', 'ST'].includes(s)) return 'FWD';
+  if (s === '1' || s === 'GK' || s === 'GKP' || s === 'GOALKEEPER') return 'GK';
+  if (s === '2' || s === 'DEF' || s === 'DEFENDER' || s === 'DEFENDERS') return 'DEF';
+  if (s === '3' || s === 'MID' || s === 'MIDFIELDER' || s === 'MIDFIELDERS') return 'MID';
+  if (s === '4' || s === 'FWD' || s === 'FW' || s === 'FORWARD' || s === 'FORWARDS' || s === 'ST') return 'FWD';
   return null;
 }
 
-/** ✅ Only use the `name` column exactly as it is */
+/** Build player object with name + element_type + price */
 function normalizePlayer(r: any) {
+  const rawValue = r.value ?? r.now_cost ?? r.price; // handle typical FPL column names
+  const price = rawValue != null && rawValue !== '' ? Number(rawValue) / 10 : null;
+
   return {
     id: String(r.id ?? r.element ?? r.code ?? r.name ?? 'unknown'),
-    name: r.name, // keep as-is, no trimming
-    element_type: normalizeType(r.element_type ?? r.position ?? r.pos ?? r.elementType),
+    name: r.name,
+    element_type: normalizeType(r.position ?? r.element_type ?? r.pos ?? r.elementType),
+    price, // ✅ price added
   };
 }
 
-/** Minimal CSV parser for simple, comma-separated input. */
+/** Minimal CSV parser */
 function parseCsv(text: string) {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (!lines.length) return [];
@@ -44,59 +48,75 @@ function parseCsv(text: string) {
   });
 }
 
-/** Find seasons folders under either data/seasons or data (supports both layouts). */
-async function listSeasons() {
-  const candidates = [fromRoot('data', 'seasons'), fromRoot('data')];
+/** Support "2017-2018" and "2017-18" inputs. */
+function normalizeSeasonInput(s: string) {
+  const m4 = s.match(/^(\d{4})[-/](\d{4})$/); // 2017-2018
+  const m2 = s.match(/^(\d{4})[-/](\d{2})$/); // 2017-18
+  if (m4) {
+    const y1 = m4[1];
+    const y2 = m4[2];
+    return { long: `${y1}-${y2}`, short: `${y1}-${y2.slice(2)}` };
+  }
+  if (m2) {
+    const y1 = m2[1];
+    const y2 = m2[2];
+    return { long: `${y1}-${parseInt(y2, 10) + 2000}`, short: `${y1}-${y2}` };
+  }
+  return { long: s, short: s };
+}
 
+/** List season folders */
+async function listSeasons() {
+  const bases = [fromRoot('data', 'seasons'), fromRoot('data')];
   let seasonsDir: string | null = null;
-  for (const c of candidates) {
+  for (const b of bases) {
     try {
-      const s = await stat(c);
-      if (s.isDirectory()) {
-        seasonsDir = c;
+      const st = await stat(b);
+      if (st.isDirectory()) {
+        seasonsDir = b;
         break;
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
-
   if (!seasonsDir) return [];
-
   const entries = await readdir(seasonsDir, { withFileTypes: true }).catch(() => []);
   return entries
-    .filter((d) => d.isDirectory?.() && /^\d{4}-\d{4}$/.test(d.name))
+    .filter((d) => d.isDirectory?.() && (/^\d{4}-\d{2}$/.test(d.name) || /^\d{4}-\d{4}$/.test(d.name)))
     .map((d) => d.name)
     .sort();
 }
 
-/** Try known locations; if missing, search any CSV that contains "merged_gw". */
-async function resolveMergedCsvPath(season: string) {
+/** Locate merged_gw.csv */
+async function resolveMergedCsvPath(seasonInput: string) {
   const tried: string[] = [];
+  const { long, short } = normalizeSeasonInput(seasonInput);
+  const seasonsToTry = Array.from(new Set([long, short]));
 
-  const candidates = [
-    ['data', 'seasons', season, 'gws', 'merged_gw.csv'],
-    ['data', 'seasons', season, 'gw', 'merged_gw.csv'],
-    ['data', 'seasons', season, 'gws', 'merged_gw', 'merged_gw.csv'],
-    ['data', season, 'gws', 'merged_gw.csv'], // no `seasons`
-    ['data', season, 'gw', 'merged_gw.csv'],  // no `seasons`
-    ['data', season, 'gws', 'merged_gw', 'merged_gw.csv'], // no `seasons`
-  ].map((p) => fromRoot(...p));
+  const candidates: string[] = [];
+  for (const s of seasonsToTry) {
+    [
+      ['data', 'seasons', s, 'gws', 'merged_gw.csv'],
+      ['data', 'seasons', s, 'gw', 'merged_gw.csv'],
+      ['data', 'seasons', s, 'gws', 'merged_gw', 'merged_gw.csv'],
+      ['data', s, 'gws', 'merged_gw.csv'],
+      ['data', s, 'gw', 'merged_gw.csv'],
+      ['data', s, 'gws', 'merged_gw', 'merged_gw.csv'],
+    ].forEach((parts) => candidates.push(fromRoot(...parts)));
+  }
 
   for (const p of candidates) {
     tried.push(p);
     try {
       const st = await stat(p);
       if (st.isFile()) return { path: p, tried };
-    } catch {
-      // continue
-    }
+    } catch {}
   }
 
-  // Fallback: walk both possible season roots
-  const roots = [fromRoot('data', 'seasons', season), fromRoot('data', season)];
   const found: string[] = [];
-
+  const roots: string[] = [];
+  for (const s of seasonsToTry) {
+    roots.push(fromRoot('data', 'seasons', s), fromRoot('data', s));
+  }
   async function walk(dir: string) {
     let entries: any[] = [];
     try {
@@ -110,18 +130,16 @@ async function resolveMergedCsvPath(season: string) {
       else if (/merged_gw.*\.csv$/i.test(e.name)) found.push(full);
     }
   }
-
   for (const r of roots) await walk(r);
 
   found.sort();
   if (found.length) return { path: found[0], tried: tried.concat(found) };
-
   return { path: null as unknown as string, tried };
 }
 
-async function seasonPlayers(season: string, debug: boolean) {
+/** Build player list, filter by GW if provided (text compare) */
+async function seasonPlayers(season: string, debug: boolean, gw?: number) {
   const { path: csvPath, tried } = await resolveMergedCsvPath(season);
-
   if (!csvPath) {
     return { _debug: debug ? { resolved: null, tried } : undefined, players: [] };
   }
@@ -129,8 +147,15 @@ async function seasonPlayers(season: string, debug: boolean) {
   const csv = await readFile(csvPath, 'utf-8');
   const rows = parseCsv(csv);
 
+  const filteredRows = typeof gw === 'number'
+    ? rows.filter((r) => {
+        const v = r.GW ?? r.gw ?? r.gameweek ?? r.Gameweek;
+        return v != null && String(v).trim() === String(gw);
+      })
+    : rows;
+
   const seen = new Map<string, any>();
-  for (const r of rows) {
+  for (const r of filteredRows) {
     const p = normalizePlayer(r);
     if (!p.name) continue;
     if (!seen.has(p.id)) seen.set(p.id, p);
@@ -139,11 +164,17 @@ async function seasonPlayers(season: string, debug: boolean) {
   return { _debug: debug ? { resolved: csvPath, tried } : undefined, players };
 }
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const op = searchParams.get('op');         // 'seasons' | 'players'
-  const season = searchParams.get('season'); // e.g. '2020-2021'
+/** API handler (reads ?gw=... or cookie fpl_gw) */
+export async function GET(req: NextRequest) {
+  const searchParams = req.nextUrl.searchParams;
+  const op = searchParams.get('op');
+  const season = searchParams.get('season');
   const debug = searchParams.get('debug') === '1';
+
+  // Prefer ?gw=, else fall back to cookie fpl_gw
+  const gwParam = searchParams.get('gw');
+  const cookieGw = req.cookies.get('fpl_gw')?.value;
+  const gw = gwParam ? Number(gwParam) : (cookieGw ? Number(cookieGw) : undefined);
 
   try {
     if (op === 'seasons') {
@@ -153,8 +184,8 @@ export async function GET(req: Request) {
 
     if (op === 'players') {
       if (!season) return NextResponse.json({ error: 'season required' }, { status: 400 });
-      const result = await seasonPlayers(season, debug);
-      return NextResponse.json({ season, ...result });
+      const result = await seasonPlayers(season, debug, gw);
+      return NextResponse.json({ season, gw, ...result });
     }
 
     return NextResponse.json({ error: 'unknown op' }, { status: 400 });

@@ -3,10 +3,6 @@
 import { useEffect } from 'react';
 
 const SEASONS = [
-  '2016-2017',
-  '2017-2018',
-  '2018-2019',
-  '2019-2020',
   '2020-2021',
   '2021-2022',
   '2022-2023',
@@ -43,9 +39,6 @@ export default function SeasonPicker({
           </option>
         ))}
       </select>
-      <p className="mt-2 text-xs text-slate-500">
-        Reads <code>data/&lt;season&gt;/gws/merged_gw.csv</code>
-      </p>
     </div>
   );
 }

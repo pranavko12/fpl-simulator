@@ -18,7 +18,12 @@ const ELEMENT_TYPE_MAP = {
   Forwards: 'FWD',
 } as const;
 
-type UiPlayer = { name: string; element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null };
+type UiPlayer = {
+  name: string;
+  element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
+  // accept number OR string since it’s coming from the same JSON
+  price?: number | string | null;
+};
 
 export default function TeamGrid({
   season,
@@ -78,7 +83,7 @@ export default function TeamGrid({
             ))}
           </select>
         </div>
-        
+
         {/* Player Grid */}
         {Object.entries(positions).map(([pos, count]) => (
           <div key={pos}>
@@ -127,9 +132,13 @@ export default function TeamGrid({
                       className="p-2 rounded hover:bg-blue-100 cursor-pointer transition"
                     >
                       {p.name}
-                      {p.element_type ? (
-                        <span className="text-xs text-slate-500"> ({p.element_type})</span>
-                      ) : null}
+                      <span className="text-xs text-slate-600">
+                        {p.element_type ? ` (${p.element_type})` : ''}
+                        {/* just like name/position: read straight from the JSON */}
+                        {p.price !== null && p.price !== undefined && p.price !== ''
+                          ? ` - ${p.price}$`
+                          : ''}
+                      </span>
                     </li>
                   ))}
                 </ul>
