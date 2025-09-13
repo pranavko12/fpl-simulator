@@ -21,7 +21,6 @@ const ELEMENT_TYPE_MAP = {
 type UiPlayer = {
   name: string;
   element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
-  // accept number OR string since it’s coming from the same JSON
   price?: number | string | null;
 };
 
@@ -66,7 +65,6 @@ export default function TeamGrid({
   return (
     <div className="py-8 px-4 flex justify-center">
       <div className="max-w-5xl w-full mx-auto space-y-8 rounded-2xl bg-[url('/pitch.png')] bg-cover bg-center shadow-lg p-6">
-        {/* Formation Selector */}
         <div className="flex items-center gap-3 justify-center mb-6">
           <label className="text-white font-semibold text-base">Formation:</label>
           <select
@@ -84,7 +82,6 @@ export default function TeamGrid({
           </select>
         </div>
 
-        {/* Player Grid */}
         {Object.entries(positions).map(([pos, count]) => (
           <div key={pos}>
             <h3 className="text-center text-white text-lg font-semibold mb-3 drop-shadow">
@@ -104,7 +101,6 @@ export default function TeamGrid({
           </div>
         ))}
 
-        {/* Modal */}
         {showModal && (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
             <div className="bg-white rounded-xl p-6 max-h-[80vh] w-[90vw] max-w-xl overflow-y-auto shadow-lg relative">
@@ -134,10 +130,7 @@ export default function TeamGrid({
                       {p.name}
                       <span className="text-xs text-slate-600">
                         {p.element_type ? ` (${p.element_type})` : ''}
-                        {/* just like name/position: read straight from the JSON */}
-                        {p.price !== null && p.price !== undefined && p.price !== ''
-                          ? ` - ${p.price}$`
-                          : ''}
+                        {p.price !== null && p.price !== undefined && p.price !== '' ? ` - ${p.price}$` : ''}
                       </span>
                     </li>
                   ))}

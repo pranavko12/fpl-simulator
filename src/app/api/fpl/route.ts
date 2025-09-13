@@ -1,18 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, readdir, stat } from 'fs/promises';
+import type { Dirent } from 'fs';
 import path from 'path';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-/** Resolve from the project root (safe in dev/build). */
+type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD' | null;
+type CsvRow = Record<string, string>;
+type Player = {
+  id: string;
+  name: string;
+  element_type: ElementType;
+  price: number | null;
+};
+
 function fromRoot(...segments: string[]) {
   return path.join(process.cwd(), ...segments);
 }
 
-/** Normalize to GK/DEF/MID/FWD */
-function normalizeType(raw: any): 'GK' | 'DEF' | 'MID' | 'FWD' | null {
+function normalizeType(raw: unknown): ElementType {
   if (raw == null) return null;
   const s = String(raw).trim().toUpperCase();
   if (s === '1' || s === 'GK' || s === 'GKP' || s === 'GOALKEEPER') return 'GK';
@@ -22,36 +30,34 @@ function normalizeType(raw: any): 'GK' | 'DEF' | 'MID' | 'FWD' | null {
   return null;
 }
 
-/** Build player object with name + element_type + price */
-function normalizePlayer(r: any) {
-  const rawValue = r.value ?? r.now_cost ?? r.price; // handle typical FPL column names
-  const price = rawValue != null && rawValue !== '' ? Number(rawValue) / 10 : null;
+function normalizePlayer(r: CsvRow): Player {
+  const rawValue = r.value ?? r.now_cost ?? r.price;
+  const parsed = rawValue !== undefined && rawValue !== '' ? Number(String(rawValue)) : NaN;
+  const price = Number.isFinite(parsed) ? parsed / 10 : null;
 
   return {
     id: String(r.id ?? r.element ?? r.code ?? r.name ?? 'unknown'),
-    name: r.name,
+    name: r.name ?? '',
     element_type: normalizeType(r.position ?? r.element_type ?? r.pos ?? r.elementType),
-    price, // ✅ price added
+    price,
   };
 }
 
-/** Minimal CSV parser */
-function parseCsv(text: string) {
+function parseCsv(text: string): CsvRow[] {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (!lines.length) return [];
   const headers = lines[0].split(',').map((s) => s.replace(/^"|"$/g, '').trim());
   return lines.slice(1).map((line) => {
     const cells = line.split(',').map((s) => s.replace(/^"|"$/g, '').trim());
-    const rec: any = {};
-    headers.forEach((h, i) => (rec[h] = cells[i]));
+    const rec: CsvRow = {};
+    headers.forEach((h, i) => (rec[h] = cells[i] ?? ''));
     return rec;
   });
 }
 
-/** Support "2017-2018" and "2017-18" inputs. */
 function normalizeSeasonInput(s: string) {
-  const m4 = s.match(/^(\d{4})[-/](\d{4})$/); // 2017-2018
-  const m2 = s.match(/^(\d{4})[-/](\d{2})$/); // 2017-18
+  const m4 = s.match(/^(\d{4})[-/](\d{4})$/);
+  const m2 = s.match(/^(\d{4})[-/](\d{2})$/);
   if (m4) {
     const y1 = m4[1];
     const y2 = m4[2];
@@ -65,7 +71,6 @@ function normalizeSeasonInput(s: string) {
   return { long: s, short: s };
 }
 
-/** List season folders */
 async function listSeasons() {
   const bases = [fromRoot('data', 'seasons'), fromRoot('data')];
   let seasonsDir: string | null = null;
@@ -79,14 +84,13 @@ async function listSeasons() {
     } catch {}
   }
   if (!seasonsDir) return [];
-  const entries = await readdir(seasonsDir, { withFileTypes: true }).catch(() => []);
+  const entries = await readdir(seasonsDir, { withFileTypes: true }).catch(() => [] as Dirent[]);
   return entries
-    .filter((d) => d.isDirectory?.() && (/^\d{4}-\d{2}$/.test(d.name) || /^\d{4}-\d{4}$/.test(d.name)))
+    .filter((d) => (typeof d.isDirectory === 'function' ? d.isDirectory() : false) && (/^\d{4}-\d{2}$/.test(d.name) || /^\d{4}-\d{4}$/.test(d.name)))
     .map((d) => d.name)
     .sort();
 }
 
-/** Locate merged_gw.csv */
 async function resolveMergedCsvPath(seasonInput: string) {
   const tried: string[] = [];
   const { long, short } = normalizeSeasonInput(seasonInput);
@@ -118,7 +122,7 @@ async function resolveMergedCsvPath(seasonInput: string) {
     roots.push(fromRoot('data', 'seasons', s), fromRoot('data', s));
   }
   async function walk(dir: string) {
-    let entries: any[] = [];
+    let entries: Dirent[] = [];
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
@@ -126,8 +130,11 @@ async function resolveMergedCsvPath(seasonInput: string) {
     }
     for (const e of entries) {
       const full = path.join(dir, e.name);
-      if (e.isDirectory()) await walk(full);
-      else if (/merged_gw.*\.csv$/i.test(e.name)) found.push(full);
+      if (e.isDirectory()) {
+        await walk(full);
+      } else if (/merged_gw.*\.csv$/i.test(e.name)) {
+        found.push(full);
+      }
     }
   }
   for (const r of roots) await walk(r);
@@ -137,24 +144,24 @@ async function resolveMergedCsvPath(seasonInput: string) {
   return { path: null as unknown as string, tried };
 }
 
-/** Build player list, filter by GW if provided (text compare) */
 async function seasonPlayers(season: string, debug: boolean, gw?: number) {
   const { path: csvPath, tried } = await resolveMergedCsvPath(season);
   if (!csvPath) {
-    return { _debug: debug ? { resolved: null, tried } : undefined, players: [] };
+    return { _debug: debug ? { resolved: null as string | null, tried } : undefined, players: [] as Player[] };
   }
 
   const csv = await readFile(csvPath, 'utf-8');
   const rows = parseCsv(csv);
 
-  const filteredRows = typeof gw === 'number'
-    ? rows.filter((r) => {
-        const v = r.GW ?? r.gw ?? r.gameweek ?? r.Gameweek;
-        return v != null && String(v).trim() === String(gw);
-      })
-    : rows;
+  const filteredRows: CsvRow[] =
+    typeof gw === 'number'
+      ? rows.filter((r) => {
+          const v = r.GW ?? r.gw ?? r.gameweek ?? r.Gameweek;
+          return v != null && String(v).trim() === String(gw);
+        })
+      : rows;
 
-  const seen = new Map<string, any>();
+  const seen = new Map<string, Player>();
   for (const r of filteredRows) {
     const p = normalizePlayer(r);
     if (!p.name) continue;
@@ -164,17 +171,14 @@ async function seasonPlayers(season: string, debug: boolean, gw?: number) {
   return { _debug: debug ? { resolved: csvPath, tried } : undefined, players };
 }
 
-/** API handler (reads ?gw=... or cookie fpl_gw) */
 export async function GET(req: NextRequest) {
   const searchParams = req.nextUrl.searchParams;
   const op = searchParams.get('op');
   const season = searchParams.get('season');
   const debug = searchParams.get('debug') === '1';
-
-  // Prefer ?gw=, else fall back to cookie fpl_gw
   const gwParam = searchParams.get('gw');
   const cookieGw = req.cookies.get('fpl_gw')?.value;
-  const gw = gwParam ? Number(gwParam) : (cookieGw ? Number(cookieGw) : undefined);
+  const gw = gwParam ? Number(gwParam) : cookieGw ? Number(cookieGw) : undefined;
 
   try {
     if (op === 'seasons') {
@@ -189,8 +193,9 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({ error: 'unknown op' }, { status: 400 });
-  } catch (e: any) {
-    console.error('[FPL API ERROR]', e?.message);
-    return NextResponse.json({ error: e?.message ?? 'failed' }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : 'failed';
+    console.error('[FPL API ERROR]', message);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
