@@ -1,19 +1,27 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import HeroSection from './../components/HeroSection';
-import GameweekPicker from './../components/GameweekPicker';
-import TeamGrid from './../components/TeamGrid';
-import SimulateButton from './../components/SimulateButton';
-import SeasonPicker from './../components/SeasonPicker';
+import { useState } from 'react';
+import HeroSection from '../components/HeroSection';
+import SeasonPicker from '../components/SeasonPicker';
+import GameweekPicker from '../components/GameweekPicker';
+import Navbar from '../components/Navbar';
+import SimulateButton from '../components/SimulateButton';
+import TeamGrid from '../components/TeamGrid';
 
 type UiPlayer = {
   name: string;
   element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
   price?: number | null;
+  team?: string;
 };
 
-type ApiPlayer = UiPlayer;
+// raw backend payload type
+type ApiPlayer = {
+  name?: string;
+  element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
+  price?: number;
+  team?: string;
+};
 
 export default function SimulatorPage() {
   const [season, setSeason] = useState<string>('2025-2026');
@@ -21,35 +29,30 @@ export default function SimulatorPage() {
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [errorPlayers, setErrorPlayers] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!season) return;
-    document.cookie = `fpl_season=${season}; Path=/; Max-Age=${60 * 60 * 24 * 30}`;
-  }, [season]);
-
   const handleSimulate = async () => {
     setLoadingPlayers(true);
     setErrorPlayers(null);
     try {
-      const cookies = Object.fromEntries(
-        document.cookie.split('; ').map(c => {
-          const [k, ...rest] = c.split('=');
-          return [k, rest.join('=')];
-        })
-      );
-      const gwFrom = cookies['fpl_gw_from'] ? Number(cookies['fpl_gw_from']) : undefined;
-      const res = await fetch(
-        `/api/fpl?op=players&season=${encodeURIComponent(season)}${gwFrom ? `&gw=${gwFrom}` : ''}`
-      );
+      const gwFromEl = document.getElementById('gw-from') as HTMLSelectElement | null;
+      const gwFrom = gwFromEl ? Number(gwFromEl.value) : undefined;
+
+      const url = `/api/fpl?op=players&season=${encodeURIComponent(season)}${
+        gwFrom ? `&gw=${gwFrom}` : ''
+      }`;
+
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+
       const arr: ApiPlayer[] = Array.isArray(data?.players) ? data.players : [];
-      setPlayers(
-        arr.map((p) => ({
-          name: p.name ?? '',
-          element_type: p.element_type ?? null,
-          price: p.price ?? null,
-        }))
-      );
+      const uiPlayers: UiPlayer[] = arr.map((p) => ({
+        name: p.name ?? '',
+        element_type: p.element_type ?? null,
+        price: typeof p.price === 'number' ? p.price : null,
+        team: p.team ?? '',
+      }));
+
+      setPlayers(uiPlayers);
     } catch (e) {
       setErrorPlayers(e instanceof Error ? e.message : 'Failed to load players');
     } finally {
@@ -59,12 +62,22 @@ export default function SimulatorPage() {
 
   return (
     <main className="font-sans text-[#1f1f1f]">
-      <div className="max-w-5xl mx-auto px-4 py-10 bg-white rounded-xl shadow-lg space-y-12">
-        <HeroSection />
-        <SeasonPicker value={season} onChange={setSeason} />
-        <GameweekPicker />
-        <SimulateButton onClick={handleSimulate} />
-      </div>
+      <Navbar />
+      <HeroSection />
+
+      <section className="px-6 -mt-10">
+        <div className="mx-auto max-w-6xl rounded-2xl border border-emerald-200/40 bg-white/80 p-5 shadow-[0_8px_30px_rgba(31,38,135,0.12)] backdrop-blur">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col gap-4 md:flex-row md:items-end">
+              <SeasonPicker value={season} onChange={setSeason} />
+              <GameweekPicker />
+            </div>
+            <div className="flex justify-start md:justify-end">
+              <SimulateButton onClick={handleSimulate} />
+            </div>
+          </div>
+        </div>
+      </section>
 
       <TeamGrid
         season={season}

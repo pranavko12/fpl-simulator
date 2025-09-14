@@ -14,33 +14,11 @@ type Player = {
   name: string;
   element_type: ElementType;
   price: number | null;
+  team?: string;
 };
 
-function fromRoot(...segments: string[]) {
+function fromRoot(...segments: string[]): string {
   return path.join(process.cwd(), ...segments);
-}
-
-function normalizeType(raw: unknown): ElementType {
-  if (raw == null) return null;
-  const s = String(raw).trim().toUpperCase();
-  if (s === '1' || s === 'GK' || s === 'GKP' || s === 'GOALKEEPER') return 'GK';
-  if (s === '2' || s === 'DEF' || s === 'DEFENDER' || s === 'DEFENDERS') return 'DEF';
-  if (s === '3' || s === 'MID' || s === 'MIDFIELDER' || s === 'MIDFIELDERS') return 'MID';
-  if (s === '4' || s === 'FWD' || s === 'FW' || s === 'FORWARD' || s === 'FORWARDS' || s === 'ST') return 'FWD';
-  return null;
-}
-
-function normalizePlayer(r: CsvRow): Player {
-  const rawValue = r.value ?? r.now_cost ?? r.price;
-  const parsed = rawValue !== undefined && rawValue !== '' ? Number(String(rawValue)) : NaN;
-  const price = Number.isFinite(parsed) ? parsed / 10 : null;
-
-  return {
-    id: String(r.id ?? r.element ?? r.code ?? r.name ?? 'unknown'),
-    name: r.name ?? '',
-    element_type: normalizeType(r.position ?? r.element_type ?? r.pos ?? r.elementType),
-    price,
-  };
 }
 
 function parseCsv(text: string): CsvRow[] {
@@ -55,44 +33,63 @@ function parseCsv(text: string): CsvRow[] {
   });
 }
 
+function normalizeType(raw: unknown): ElementType {
+  const s = String(raw ?? '').trim().toUpperCase();
+  if (!s) return null;
+  if (s === '1' || s === 'GK' || s === 'GKP' || s === 'GOALKEEPER') return 'GK';
+  if (s === '2' || s === 'DEF' || s === 'DEFENDER' || s === 'DEFENDERS') return 'DEF';
+  if (s === '3' || s === 'MID' || s === 'MIDFIELDER' || s === 'MIDFIELDERS') return 'MID';
+  if (s === '4' || s === 'FWD' || s === 'FW' || s === 'FORWARD' || s === 'FORWARDS' || s === 'ST') return 'FWD';
+  return null;
+}
+
+function priceFromRaw(raw: unknown): number | null {
+  const n = Number(String(raw ?? '').trim());
+  if (!Number.isFinite(n)) return null;
+  return n / 10;
+}
+
+function normalizePlayer(r: CsvRow): Player {
+  const name =
+    r.name ??
+    r.web_name ??
+    r.player_name ??
+    r.second_name ??
+    r.secondName ??
+    '';
+  const elementType = normalizeType(
+    r.position ?? r.element_type ?? r.pos ?? r.elementType
+  );
+  const rawPrice =
+    r.value ?? r.Value ?? r.now_cost ?? r.NowCost ?? r.price ?? r.Price ?? r.cost ?? r.Cost;
+  const price = priceFromRaw(rawPrice);
+  const idCandidate =
+    r.id ??
+    r.element ??
+    r.code ??
+    r.player_id ??
+    r.PlayerID ??
+    (name ? name.replace(/\s+/g, '_') : 'unknown');
+  const team = r.team ?? r.Team ?? r.club ?? r.Club ?? '';
+
+  return {
+    id: String(idCandidate),
+    name,
+    element_type: elementType,
+    price,
+    team,
+  };
+}
+
 function normalizeSeasonInput(s: string) {
   const m4 = s.match(/^(\d{4})[-/](\d{4})$/);
   const m2 = s.match(/^(\d{4})[-/](\d{2})$/);
-  if (m4) {
-    const y1 = m4[1];
-    const y2 = m4[2];
-    return { long: `${y1}-${y2}`, short: `${y1}-${y2.slice(2)}` };
-  }
-  if (m2) {
-    const y1 = m2[1];
-    const y2 = m2[2];
-    return { long: `${y1}-${parseInt(y2, 10) + 2000}`, short: `${y1}-${y2}` };
-  }
+  if (m4) return { long: `${m4[1]}-${m4[2]}`, short: `${m4[1]}-${m4[2].slice(2)}` };
+  if (m2) return { long: `${m2[1]}-${parseInt(m2[2], 10) + 2000}`, short: `${m2[1]}-${m2[2]}` };
   return { long: s, short: s };
 }
 
-async function listSeasons() {
-  const bases = [fromRoot('data', 'seasons'), fromRoot('data')];
-  let seasonsDir: string | null = null;
-  for (const b of bases) {
-    try {
-      const st = await stat(b);
-      if (st.isDirectory()) {
-        seasonsDir = b;
-        break;
-      }
-    } catch {}
-  }
-  if (!seasonsDir) return [];
-  const entries = await readdir(seasonsDir, { withFileTypes: true }).catch(() => [] as Dirent[]);
-  return entries
-    .filter((d) => (typeof d.isDirectory === 'function' ? d.isDirectory() : false) && (/^\d{4}-\d{2}$/.test(d.name) || /^\d{4}-\d{4}$/.test(d.name)))
-    .map((d) => d.name)
-    .sort();
-}
-
-async function resolveMergedCsvPath(seasonInput: string) {
-  const tried: string[] = [];
+async function resolveMergedCsvPath(seasonInput: string): Promise<{ path: string | null }> {
   const { long, short } = normalizeSeasonInput(seasonInput);
   const seasonsToTry = Array.from(new Set([long, short]));
 
@@ -109,10 +106,9 @@ async function resolveMergedCsvPath(seasonInput: string) {
   }
 
   for (const p of candidates) {
-    tried.push(p);
     try {
       const st = await stat(p);
-      if (st.isFile()) return { path: p, tried };
+      if (st.isFile()) return { path: p };
     } catch {}
   }
 
@@ -121,7 +117,7 @@ async function resolveMergedCsvPath(seasonInput: string) {
   for (const s of seasonsToTry) {
     roots.push(fromRoot('data', 'seasons', s), fromRoot('data', s));
   }
-  async function walk(dir: string) {
+  async function walk(dir: string): Promise<void> {
     let entries: Dirent[] = [];
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -130,72 +126,52 @@ async function resolveMergedCsvPath(seasonInput: string) {
     }
     for (const e of entries) {
       const full = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        await walk(full);
-      } else if (/merged_gw.*\.csv$/i.test(e.name)) {
-        found.push(full);
-      }
+      if (e.isDirectory()) await walk(full);
+      else if (/merged_gw.*\.csv$/i.test(e.name)) found.push(full);
     }
   }
   for (const r of roots) await walk(r);
 
   found.sort();
-  if (found.length) return { path: found[0], tried: tried.concat(found) };
-  return { path: null as unknown as string, tried };
+  return { path: found[0] ?? null };
 }
 
-async function seasonPlayers(season: string, debug: boolean, gw?: number) {
-  const { path: csvPath, tried } = await resolveMergedCsvPath(season);
-  if (!csvPath) {
-    return { _debug: debug ? { resolved: null as string | null, tried } : undefined, players: [] as Player[] };
-  }
+async function seasonPlayers(season: string, gw?: number) {
+  const { path: csvPath } = await resolveMergedCsvPath(season);
+  if (!csvPath) return { players: [] as Player[] };
 
   const csv = await readFile(csvPath, 'utf-8');
   const rows = parseCsv(csv);
 
-  const filteredRows: CsvRow[] =
+  const filtered =
     typeof gw === 'number'
-      ? rows.filter((r) => {
-          const v = r.GW ?? r.gw ?? r.gameweek ?? r.Gameweek;
-          return v != null && String(v).trim() === String(gw);
-        })
+      ? rows.filter((r) => String(r.GW ?? r.gw ?? r.gameweek ?? r.Gameweek).trim() === String(gw))
       : rows;
 
   const seen = new Map<string, Player>();
-  for (const r of filteredRows) {
+  for (const r of filtered) {
     const p = normalizePlayer(r);
     if (!p.name) continue;
     if (!seen.has(p.id)) seen.set(p.id, p);
   }
-  const players = Array.from(seen.values());
-  return { _debug: debug ? { resolved: csvPath, tried } : undefined, players };
+  return { players: Array.from(seen.values()) };
 }
 
 export async function GET(req: NextRequest) {
-  const searchParams = req.nextUrl.searchParams;
-  const op = searchParams.get('op');
-  const season = searchParams.get('season');
-  const debug = searchParams.get('debug') === '1';
-  const gwParam = searchParams.get('gw');
-  const cookieGw = req.cookies.get('fpl_gw')?.value;
-  const gw = gwParam ? Number(gwParam) : cookieGw ? Number(cookieGw) : undefined;
+  const q = req.nextUrl.searchParams;
+  const op = q.get('op');
+  const season = q.get('season') ?? undefined;
+  const gw = q.get('gw') ? Number(q.get('gw')) : undefined;
 
-  try {
-    if (op === 'seasons') {
-      const seasons = await listSeasons();
-      return NextResponse.json({ seasons });
-    }
-
-    if (op === 'players') {
-      if (!season) return NextResponse.json({ error: 'season required' }, { status: 400 });
-      const result = await seasonPlayers(season, debug, gw);
-      return NextResponse.json({ season, gw, ...result });
-    }
-
-    return NextResponse.json({ error: 'unknown op' }, { status: 400 });
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : 'failed';
-    console.error('[FPL API ERROR]', message);
-    return NextResponse.json({ error: message }, { status: 500 });
+  if (op === 'players') {
+    if (!season) return NextResponse.json({ error: 'season required' }, { status: 400 });
+    const { players } = await seasonPlayers(season, gw);
+    return NextResponse.json({ season, gw, players });
   }
+
+  if (op === 'seasons') {
+    return NextResponse.json({ seasons: [] });
+  }
+
+  return NextResponse.json({ error: 'unknown op' }, { status: 400 });
 }

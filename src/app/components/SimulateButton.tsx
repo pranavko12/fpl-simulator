@@ -18,14 +18,12 @@ export default function SimulateButton({ onClick }: { onClick: () => void }) {
   };
 
   return (
-    <div className="flex justify-center">
-      <button
-        onClick={handle}
-        disabled={loading}
-        className="mt-8 bg-gradient-to-r from-green-500 to-blue-500 hover:from-green-600 hover:to-blue-600 text-white font-bold text-lg px-8 py-3 rounded-lg shadow-lg transition-all disabled:opacity-60"
-      >
-        {loading ? 'Simulating…' : '▶️ Simulate'}
-      </button>
-    </div>
+    <button
+      onClick={handle}
+      disabled={loading}
+      className="bg-gradient-to-r from-emerald-500 to-sky-500 hover:from-emerald-600 hover:to-sky-600 text-white font-bold text-lg px-8 py-3 rounded-xl shadow-lg transition-all disabled:opacity-60"
+    >
+      {loading ? 'Simulating…' : 'Pick Team'}
+    </button>
   );
 }
