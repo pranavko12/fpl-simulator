@@ -23,6 +23,7 @@ type UiPlayer = {
   element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
   price?: number | string | null;
   team?: string;
+  points?: number | null;
 };
 
 export default function TeamGrid({
@@ -61,17 +62,15 @@ export default function TeamGrid({
   );
 
   useEffect(() => {
-  setSelected((prev) => {
-    const next: Record<string, (UiPlayer | null)[]> = { ...prev };
-    for (const [pos, count] of Object.entries(positions)) {
-      const arr = prev[pos] ?? [];
-      if (arr.length > count) next[pos] = arr.slice(0, count);
-      else next[pos] = [...arr, ...Array(count - arr.length).fill(null)];
-    }
-    return next;
-  });
-}, [positions]);
-
+    setSelected((prev) => {
+      const next: Record<string, (UiPlayer | null)[]> = { ...prev };
+      for (const [pos, count] of Object.entries(positions)) {
+        const arr = prev[pos] ?? [];
+        next[pos] = arr.length > count ? arr.slice(0, count) : [...arr, ...Array(count - arr.length).fill(null)];
+      }
+      return next;
+    });
+  }, [positions]);
 
   const handleAddClick = (position: string, idx: number) => {
     setModalPosition(position);
@@ -92,12 +91,13 @@ export default function TeamGrid({
     const n = Number(String(x).replace(/,/g, '').trim());
     return Number.isFinite(n) ? n : 0;
   };
+
   const totalSpent = useMemo(() => {
     const all = Object.values(selected).flat().filter(Boolean) as UiPlayer[];
     return all.reduce((sum, p) => sum + toNum(p.price), 0);
   }, [selected]);
-  const budgetLeft = 100 - totalSpent;
 
+  const budgetLeft = 100 - totalSpent;
   const fmtM = (n: number) => `${n.toFixed(1)}M`;
 
   const choosePlayer = (p: UiPlayer) => {
@@ -196,7 +196,9 @@ export default function TeamGrid({
                     <li className="text-sm text-slate-500">No players found.</li>
                   )}
                   {filteredPlayers.map((p, i) => {
-                    const price = toNum(p.price);
+                    const priceIsNumber = typeof p.price === 'number';
+                    const priceDisplay = priceIsNumber ? `${(p.price as number).toFixed(1)}M` : '';
+                    const pts = typeof p.points === 'number' ? p.points : 0;
                     return (
                       <li
                         key={`${p.name}-${i}`}
@@ -208,9 +210,10 @@ export default function TeamGrid({
                             {p.name}
                             {p.element_type ? ` (${p.element_type})` : ''}
                           </span>
-                          <span className="text-sm font-semibold text-slate-700">
-                            {price ? `${price.toFixed(1)}M` : ''}
-                          </span>
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-semibold text-slate-700">{pts} pts</span>
+                            <span className="text-sm font-semibold text-slate-700">{priceDisplay}</span>
+                          </div>
                         </div>
                         {p.team && (
                           <div className="mt-1 text-base font-bold text-slate-800">{p.team}</div>

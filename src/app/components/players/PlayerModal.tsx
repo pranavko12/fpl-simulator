@@ -1,11 +1,23 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Player } from '../../../types';
+
+type ModalPlayer = {
+  id: string | number;
+  name?: string;
+  web_name?: string;
+  first_name?: string;
+  second_name?: string;
+  element_type?: string | null;
+  price?: number | string | null;
+  points?: number | string | null;
+  total_points?: number | string | null;
+  team?: string | null;
+};
 
 type Props = {
-  players: Player[];
-  onSelect: (p: Player) => void;
+  players: ModalPlayer[];
+  onSelect: (p: ModalPlayer) => void;
   onClose: () => void;
 };
 
@@ -13,28 +25,48 @@ export default function PlayerModal({ players, onSelect, onClose }: Props) {
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Autofocus search on mount
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(t);
   }, []);
 
-  // Close on ESC
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const displayName = (p: ModalPlayer) => {
+    if (p.name && p.name.trim()) return p.name;
+    const joined = [p.first_name, p.second_name].filter(Boolean).join(' ').trim();
+    if (joined) return joined;
+    return p.web_name ?? 'Unknown';
+  };
+
+  const toNum = (x: number | string | null | undefined): number | null => {
+    if (x === null || x === undefined || x === '') return null;
+    const n = Number(String(x).replace(/,/g, '').trim());
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const formatPrice = (x: number | string | null | undefined): string => {
+    const n = toNum(x);
+    return n === null ? '-' : `£${n.toFixed(1)}`;
+  };
+
+  const getPoints = (p: ModalPlayer): number => {
+    const n = toNum(p.points ?? p.total_points);
+    return n ?? 0;
+  };
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return players.slice(0, 300);
     return players
       .filter((p) => {
-        const a = (p.web_name || '').toLowerCase();
-        const b = (p.first_name || '').toLowerCase();
-        const c = (p.second_name || '').toLowerCase();
-        return a.includes(needle) || b.includes(needle) || c.includes(needle);
+        const n = displayName(p).toLowerCase();
+        const t = (p.team ?? '').toLowerCase();
+        return n.includes(needle) || t.includes(needle);
       })
       .slice(0, 300);
   }, [players, q]);
@@ -82,16 +114,21 @@ export default function PlayerModal({ players, onSelect, onClose }: Props) {
           )}
           {filtered.map((p) => (
             <button
-              key={p.id}
+              key={String(p.id)}
               className="w-full text-left py-2 hover:bg-blue-50 px-2 rounded"
               onClick={() => onSelect(p)}
             >
               <div className="font-medium">
-                {p.web_name}{' '}
-                <span className="text-xs opacity-60">({p.element_type})</span>
+                {displayName(p)}{' '}
+                {p.element_type ? (
+                  <span className="text-xs opacity-60">({String(p.element_type)})</span>
+                ) : null}
               </div>
+              {p.team ? (
+                <div className="text-sm font-semibold">{p.team}</div>
+              ) : null}
               <div className="text-xs opacity-70">
-                £{p.price.toFixed(1)} • {p.total_points} pts
+                {getPoints(p)} pts • {formatPrice(p.price)}
               </div>
             </button>
           ))}

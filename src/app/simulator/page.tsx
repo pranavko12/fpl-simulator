@@ -13,14 +13,15 @@ type UiPlayer = {
   element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
   price?: number | null;
   team?: string;
+  points?: number | null;
 };
 
-// raw backend payload type
 type ApiPlayer = {
   name?: string;
   element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
   price?: number;
   team?: string;
+  points?: number | null;
 };
 
 export default function SimulatorPage() {
@@ -28,6 +29,7 @@ export default function SimulatorPage() {
   const [players, setPlayers] = useState<UiPlayer[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [errorPlayers, setErrorPlayers] = useState<string | null>(null);
+  const [showTeam, setShowTeam] = useState(false);
 
   const handleSimulate = async () => {
     setLoadingPlayers(true);
@@ -50,9 +52,11 @@ export default function SimulatorPage() {
         element_type: p.element_type ?? null,
         price: typeof p.price === 'number' ? p.price : null,
         team: p.team ?? '',
+        points: typeof p.points === 'number' ? p.points : null,
       }));
 
       setPlayers(uiPlayers);
+      setShowTeam(true);
     } catch (e) {
       setErrorPlayers(e instanceof Error ? e.message : 'Failed to load players');
     } finally {
@@ -79,12 +83,14 @@ export default function SimulatorPage() {
         </div>
       </section>
 
-      <TeamGrid
-        season={season}
-        players={players}
-        loading={loadingPlayers}
-        error={errorPlayers}
-      />
+      {showTeam && (
+        <TeamGrid
+          season={season}
+          players={players}
+          loading={loadingPlayers}
+          error={errorPlayers}
+        />
+      )}
     </main>
   );
 }
