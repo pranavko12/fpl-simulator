@@ -72,7 +72,8 @@ export default function TeamGrid({
       const next: Record<string, (UiPlayer | null)[]> = { ...prev };
       for (const [pos, count] of Object.entries(positions)) {
         const arr = prev[pos] ?? [];
-        next[pos] = arr.length > count ? arr.slice(0, count) : [...arr, ...Array(count - arr.length).fill(null)];
+        next[pos] =
+          arr.length > count ? arr.slice(0, count) : [...arr, ...Array(count - arr.length).fill(null)];
       }
       return next;
     });
@@ -248,7 +249,9 @@ export default function TeamGrid({
                   >
                     {picked ? (
                       <div className="flex flex-col items-center gap-1">
-                        <span className="font-semibold leading-tight line-clamp-2">{picked.name}</span>
+                        <span className="font-semibold leading-tight line-clamp-2">
+                          {picked.name}
+                        </span>
                         <span className="text-xs text-slate-300">{picked.team}</span>
                       </div>
                     ) : (
@@ -321,7 +324,9 @@ export default function TeamGrid({
                     <select
                       className="w-full rounded border px-3 py-2 text-sm"
                       value={sortKey}
-                      onChange={(e) => setSortKey(e.target.value as any)}
+                      onChange={(e) =>
+                        setSortKey(e.target.value as 'points_desc' | 'price_desc' | 'price_asc')
+                      }
                     >
                       <option value="points_desc">Sort: Most points</option>
                       <option value="price_desc">Sort: Highest price</option>
@@ -362,7 +367,9 @@ export default function TeamGrid({
                             </span>
                             <div className="flex items-center gap-3">
                               <span className="text-sm font-semibold text-slate-700">{pts} pts</span>
-                              <span className="text-sm font-semibold text-slate-700">{priceDisplay}</span>
+                              <span className="text-sm font-semibold text-slate-700">
+                                {priceDisplay}
+                              </span>
                             </div>
                           </div>
                           {p.team && (
