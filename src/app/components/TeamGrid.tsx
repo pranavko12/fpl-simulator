@@ -1,6 +1,8 @@
+// src/app/components/TeamGrid.tsx
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import SimulatePanel from './SimulatePanel';
 
 const FORMATIONS = [
   { label: '3-5-2', value: [3, 5, 2] },
@@ -27,16 +29,25 @@ type UiPlayer = {
   points?: number | null;
 };
 
+type GwStat = { price: number; points: number };
+type StatsIndex = Record<string, Record<number, GwStat>>;
+
 export default function TeamGrid({
   season,
   players,
   loading,
   error,
+  stats,
+  gwFrom,
+  gwTo,
 }: {
   season: string;
   players: UiPlayer[];
   loading?: boolean;
   error?: string | null;
+  stats?: StatsIndex;
+  gwFrom: number | null;
+  gwTo: number | null;
 }) {
   const [formation, setFormation] = useState<[number, number, number]>([4, 4, 2]);
   const [showModal, setShowModal] = useState(false);
@@ -72,8 +83,7 @@ export default function TeamGrid({
       const next: Record<string, (UiPlayer | null)[]> = { ...prev };
       for (const [pos, count] of Object.entries(positions)) {
         const arr = prev[pos] ?? [];
-        next[pos] =
-          arr.length > count ? arr.slice(0, count) : [...arr, ...Array(count - arr.length).fill(null)];
+        next[pos] = arr.length > count ? arr.slice(0, count) : [...arr, ...Array(count - arr.length).fill(null)];
       }
       return next;
     });
@@ -113,9 +123,7 @@ export default function TeamGrid({
   }, [filteredBySlot]);
 
   const priceRange = useMemo(() => {
-    const prices = filteredBySlot
-      .map((p) => toNum(p.price))
-      .filter((n) => Number.isFinite(n) && n > 0);
+    const prices = filteredBySlot.map((p) => toNum(p.price)).filter((n) => Number.isFinite(n) && n > 0);
     if (!prices.length) return { steps: ['Any'] as string[] };
     const min = Math.min(...prices);
     const max = Math.max(...prices);
@@ -194,6 +202,11 @@ export default function TeamGrid({
     });
   };
 
+  const pickedPlayers: UiPlayer[] = useMemo(
+    () => (Object.values(selected).flat().filter(Boolean) as UiPlayer[]),
+    [selected]
+  );
+
   return (
     <div className="py-8 px-4 flex justify-center">
       <div className="max-w-5xl w-full mx-auto space-y-8 rounded-2xl bg-[url('/pitch.png')] bg-cover bg-center shadow-lg p-6">
@@ -203,9 +216,7 @@ export default function TeamGrid({
             <select
               className="px-3 py-2 rounded bg-white/90 text-gray-800 font-semibold shadow focus:outline-none"
               value={formation.join('-')}
-              onChange={(e) =>
-                setFormation(e.target.value.split('-').map(Number) as [number, number, number])
-              }
+              onChange={(e) => setFormation(e.target.value.split('-').map(Number) as [number, number, number])}
             >
               {FORMATIONS.map((f) => (
                 <option key={f.label} value={f.value.join('-')}>
@@ -215,11 +226,7 @@ export default function TeamGrid({
             </select>
           </div>
 
-          <div
-            className={`px-3 py-1 rounded text-sm font-semibold ${
-              budgetLeft < 0 ? 'bg-red-600 text-white' : 'bg-white/90 text-gray-900'
-            }`}
-          >
+          <div className={`${budgetLeft < 0 ? 'bg-red-600 text-white' : 'bg-white/90 text-gray-900'} px-3 py-1 rounded text-sm font-semibold`}>
             {fmtM(budgetLeft)} left
           </div>
 
@@ -249,9 +256,7 @@ export default function TeamGrid({
                   >
                     {picked ? (
                       <div className="flex flex-col items-center gap-1">
-                        <span className="font-semibold leading-tight line-clamp-2">
-                          {picked.name}
-                        </span>
+                        <span className="font-semibold leading-tight line-clamp-2">{picked.name}</span>
                         <span className="text-xs text-slate-300">{picked.team}</span>
                       </div>
                     ) : (
@@ -265,7 +270,7 @@ export default function TeamGrid({
         ))}
 
         {showModal && (
-          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl p-6 max-h-[80vh] w-[90vw] max-w-3xl overflow-y-auto shadow-lg relative">
               <button
                 className="absolute top-2 right-3 text-gray-500 text-2xl font-bold"
@@ -276,12 +281,10 @@ export default function TeamGrid({
                 }}
                 aria-label="Close"
               >
-                &times;
+                ×
               </button>
 
-              <h2 className="text-lg font-semibold mb-4">
-                Select {modalPosition} — {season}
-              </h2>
+              <h2 className="text-lg font-semibold mb-4">Select {modalPosition} — {season}</h2>
 
               {loading && <div className="text-sm text-slate-500">Loading players…</div>}
               {error && <div className="text-sm text-red-600">Error: {error}</div>}
@@ -324,9 +327,7 @@ export default function TeamGrid({
                     <select
                       className="w-full rounded border px-3 py-2 text-sm"
                       value={sortKey}
-                      onChange={(e) =>
-                        setSortKey(e.target.value as 'points_desc' | 'price_desc' | 'price_asc')
-                      }
+                      onChange={(e) => setSortKey(e.target.value as 'points_desc' | 'price_desc' | 'price_asc')}
                     >
                       <option value="points_desc">Sort: Most points</option>
                       <option value="price_desc">Sort: Highest price</option>
@@ -347,9 +348,7 @@ export default function TeamGrid({
                   </div>
 
                   <ul className="space-y-2">
-                    {filteredPlayers.length === 0 && (
-                      <li className="text-sm text-slate-500">No players match.</li>
-                    )}
+                    {filteredPlayers.length === 0 && <li className="text-sm text-slate-500">No players match.</li>}
                     {filteredPlayers.map((p, i) => {
                       const priceVal = toNum(p.price);
                       const priceDisplay = priceVal ? `${priceVal.toFixed(1)}M` : '';
@@ -367,14 +366,10 @@ export default function TeamGrid({
                             </span>
                             <div className="flex items-center gap-3">
                               <span className="text-sm font-semibold text-slate-700">{pts} pts</span>
-                              <span className="text-sm font-semibold text-slate-700">
-                                {priceDisplay}
-                              </span>
+                              <span className="text-sm font-semibold text-slate-700">{priceDisplay}</span>
                             </div>
                           </div>
-                          {p.team && (
-                            <div className="mt-1 text-base font-bold text-slate-800">{p.team}</div>
-                          )}
+                          {p.team && <div className="mt-1 text-base font-bold text-slate-800">{p.team}</div>}
                         </li>
                       );
                     })}
@@ -384,6 +379,15 @@ export default function TeamGrid({
             </div>
           </div>
         )}
+
+        <div className="flex justify-center">
+          <SimulatePanel
+            players={pickedPlayers.map((p) => ({ name: p.name, element_type: p.element_type ?? null }))}
+            gwFrom={gwFrom}
+            gwTo={gwTo}
+            stats={stats || {}}
+          />
+        </div>
       </div>
     </div>
   );
