@@ -1,4 +1,3 @@
-// src/app/components/SimulatePanel.tsx
 'use client';
 
 import React, { useMemo, useState } from 'react';
@@ -19,12 +18,14 @@ export default function SimulatePanel({
   gwTo,
   stats,
   className,
+  disabled,
 }: {
   players: UiPlayerSim[];
   gwFrom: number | null;
   gwTo: number | null;
   stats: StatsIndex;
   className?: string;
+  disabled?: boolean;
 }) {
   const [show, setShow] = useState(false);
 
@@ -33,6 +34,8 @@ export default function SimulatePanel({
     if (gwFrom > gwTo) return false;
     return players.length === 15;
   }, [players.length, gwFrom, gwTo]);
+
+  const effectiveDisabled = disabled || !canSimulate;
 
   type Row = {
     key: string;
@@ -47,7 +50,7 @@ export default function SimulatePanel({
   };
 
   const rows: Row[] = useMemo(() => {
-    if (!canSimulate || gwFrom == null || gwTo == null) return [];
+    if (effectiveDisabled || gwFrom == null || gwTo == null) return [];
     return players.map((p) => {
       const key = p.name;
       const from = stats[key]?.[gwFrom];
@@ -68,7 +71,7 @@ export default function SimulatePanel({
         ptsDiff: toPts - fromPts,
       };
     });
-  }, [canSimulate, gwFrom, gwTo, players, stats]);
+  }, [effectiveDisabled, gwFrom, gwTo, players, stats]);
 
   const totals = useMemo(() => {
     let priceDiff = 0,
@@ -85,22 +88,25 @@ export default function SimulatePanel({
   }, [rows]);
 
   const tooltip = useMemo(() => {
-    if (canSimulate) return 'Run simulation';
-    if (players.length !== 15) return `Select all 15 players (${players.length}/15)`;
-    if (gwFrom != null && gwTo != null && gwFrom > gwTo) return 'GW From must be ≤ GW To';
-    return 'Choose both gameweeks';
-  }, [canSimulate, players.length, gwFrom, gwTo]);
+    if (!effectiveDisabled) return 'Run simulation';
+    if (!canSimulate) {
+      if (players.length !== 15) return `Select all 15 players (${players.length}/15)`;
+      if (gwFrom != null && gwTo != null && gwFrom > gwTo) return 'GW From must be ≤ GW To';
+      return 'Choose both gameweeks';
+    }
+    return 'Cannot simulate';
+  }, [effectiveDisabled, canSimulate, players.length, gwFrom, gwTo]);
 
   return (
     <div className={`w-full ${className || ''}`}>
       <button
         type="button"
         onClick={() => setShow(true)}
-        disabled={!canSimulate}
+        disabled={effectiveDisabled}
         title={tooltip}
         className={[
           'rounded-xl px-5 py-3 text-base md:text-lg font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2',
-          canSimulate
+          !effectiveDisabled
             ? 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-600'
             : 'bg-gray-300 text-gray-600 cursor-not-allowed focus:ring-transparent',
         ].join(' ')}

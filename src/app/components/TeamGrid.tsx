@@ -1,4 +1,3 @@
-// src/app/components/TeamGrid.tsx
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
@@ -190,6 +189,18 @@ export default function TeamGrid({
   }, [selected]);
 
   const budgetLeft = 100 - totalSpent;
+
+  const isOverBudget = budgetLeft < 0;
+
+  const pickedPlayers: UiPlayer[] = useMemo(
+    () => (Object.values(selected).flat().filter(Boolean) as UiPlayer[]),
+    [selected]
+  );
+
+  const hasFullSquad = pickedPlayers.length === 15;
+
+  const canSimulate = !isOverBudget && hasFullSquad;
+
   const fmtM = (n: number) => `${n.toFixed(1)}M`;
 
   const resetTeam = () => {
@@ -201,11 +212,6 @@ export default function TeamGrid({
       Bench: Array(positions.Bench).fill(null),
     });
   };
-
-  const pickedPlayers: UiPlayer[] = useMemo(
-    () => (Object.values(selected).flat().filter(Boolean) as UiPlayer[]),
-    [selected]
-  );
 
   return (
     <div className="py-8 px-4 flex justify-center">
@@ -386,6 +392,7 @@ export default function TeamGrid({
             gwFrom={gwFrom}
             gwTo={gwTo}
             stats={stats || {}}
+            disabled={!canSimulate}
           />
         </div>
       </div>
