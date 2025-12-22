@@ -2,53 +2,66 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Navbar() {
-  const [showNav, setShowNav] = useState(true);
+  const [visible, setVisible] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
 
   useEffect(() => {
-    const handleScroll = () => {
-      const currentScrollY = window.scrollY;
-      if (currentScrollY < 50) {
-        setShowNav(true);
-      } else if (currentScrollY > lastScrollY) {
-        setShowNav(false); // scrolling down → hide
+    const onScroll = () => {
+      const current = window.scrollY;
+
+      if (current < 40) {
+        setVisible(true);
+      } else if (current > lastScrollY) {
+        setVisible(false);
       } else {
-        setShowNav(true); // scrolling up → show
+        setVisible(true);
       }
-      setLastScrollY(currentScrollY);
+
+      setLastScrollY(current);
     };
 
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', onScroll);
+    return () => window.removeEventListener('scroll', onScroll);
   }, [lastScrollY]);
 
   return (
-    <nav
-      className={`fixed top-0 left-0 w-full z-20 bg-white/80 backdrop-blur shadow-sm transition-transform duration-300 ${
-        showNav ? 'translate-y-0' : '-translate-y-full'
-      }`}
-      aria-label="Primary"
-    >
-      <div className="mx-auto max-w-6xl px-6">
-        <div className="flex items-center justify-between py-4">
-          <Link href="/" className="text-xl font-extrabold tracking-tight">
-            FPL <span className="text-emerald-700">Simulator</span>
-          </Link>
-          <div className="flex items-center gap-6 text-sm font-medium">
-            <a href="#how-it-works" className="hover:text-emerald-700 transition">
-              How it works
-            </a>
-            <Link
-              href="/simulator"
-              className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-white shadow-sm hover:bg-emerald-700 transition"
-            >
-              Launch App
-            </Link>
+    <AnimatePresence>
+      {visible && (
+        <motion.nav
+          initial={{ y: -80, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: -80, opacity: 0 }}
+          transition={{ duration: 0.25, ease: 'easeOut' }}
+          className="fixed inset-x-0 top-0 z-30 border-b border-slate-200/60 bg-white/80 backdrop-blur"
+        >
+          <div className="mx-auto max-w-6xl px-6">
+            <div className="flex h-16 items-center justify-between">
+              <Link href="/" className="text-xl font-extrabold tracking-tight">
+                FPL <span className="text-emerald-700">Simulator</span>
+              </Link>
+
+              <div className="flex items-center gap-6 text-sm">
+                <a
+                  href="#how-it-works"
+                  className="font-medium text-slate-600 transition hover:text-slate-900"
+                >
+                  How it works
+                </a>
+
+                <Link
+                  href="/simulator"
+                  className="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 font-medium text-white shadow-sm transition hover:bg-slate-800"
+                >
+                  Launch
+                </Link>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    </nav>
+        </motion.nav>
+      )}
+    </AnimatePresence>
   );
 }
