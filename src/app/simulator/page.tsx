@@ -1,135 +1,168 @@
-// src/app/simulator/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import HeroSection from '../components/HeroSection';
-import SeasonPicker from '../components/SeasonPicker';
 import GameweekPicker from '../components/GameweekPicker';
 import Navbar from '../components/Navbar';
-import SimulateButton from '../components/SimulateButton';
 import TeamGrid from '../components/TeamGrid';
 
+type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
+
 type UiPlayer = {
+  id: string;
   name: string;
-  element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
+  element_type?: ElementType | null;
   price?: number | null;
   team?: string;
   points?: number | null;
 };
 
-type ApiPlayer = {
-  name?: string | null;
-  element_type?: 'GK' | 'DEF' | 'MID' | 'FWD' | null;
-  price?: number | string | null;
-  team?: string | null;
-  points?: number | string | null;
+type PrefillPlayer = {
+  slot: number;
+  isBench: boolean;
+  id: string;
+  name: string;
+  element_type: ElementType | null;
+  team: string;
+  price: number | null;
+  points: number | null;
 };
 
-type GwStat = { price: number; points: number };
-type StatsIndex = Record<string, Record<number, GwStat>>;
+type ApiPlayersResp = {
+  players: Array<{
+    id: string;
+    name: string;
+    element_type: ElementType | null;
+    price: number | null;
+    team: string;
+    points: number | null;
+  }>;
+};
+
+type ApiEntryTeamResp = {
+  entryId: number;
+  gw: number;
+  teamName: string | null;
+  managerName: string | null;
+  squad: PrefillPlayer[];
+};
 
 export default function SimulatorPage() {
-  const [season, setSeason] = useState<string>('2025-2026');
   const [players, setPlayers] = useState<UiPlayer[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [errorPlayers, setErrorPlayers] = useState<string | null>(null);
-  const [showTeam, setShowTeam] = useState(false);
-  const [statsIndex, setStatsIndex] = useState<StatsIndex>({});
-  const [gwFrom, setGwFrom] = useState<number | null>(null);
-  const [gwTo, setGwTo] = useState<number | null>(null);
 
-  const toNum = (v: unknown): number => {
-    if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
-    if (typeof v === 'string') {
-      const n = Number(v.trim());
-      return Number.isFinite(n) ? n : 0;
-    }
-    return 0;
-  };
+  const [entryId, setEntryId] = useState('');
+  const [importError, setImportError] = useState<string | null>(null);
+  const [prefill, setPrefill] = useState<PrefillPlayer[] | null>(null);
 
-  const handleSimulate = async () => {
+  const [teamGw, setTeamGw] = useState<number>(1);
+
+  async function loadPlayers() {
     setLoadingPlayers(true);
     setErrorPlayers(null);
     try {
-      const fromEl = document.getElementById('gw-from') as HTMLSelectElement | null;
-      const toEl = document.getElementById('gw-to') as HTMLSelectElement | null;
-      const from = fromEl ? Number(fromEl.value) : undefined;
-      const to = toEl ? Number(toEl.value) : undefined;
-      setGwFrom(from ?? null);
-      setGwTo(to ?? null);
+      const res = await fetch('/api/fpl?op=players', { cache: 'no-store' });
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as ApiPlayersResp;
 
-      const urlPlayers = `/api/fpl?op=players&season=${encodeURIComponent(season)}${from ? `&gw=${from}` : ''}`;
-      const resPlayers = await fetch(urlPlayers, { cache: 'no-store' });
-      if (!resPlayers.ok) throw new Error(`HTTP ${resPlayers.status}`);
-      const dataPlayers = await resPlayers.json();
+      const ui = (data.players ?? [])
+        .map((p) => ({
+          id: String(p.id),
+          name: String(p.name ?? '').trim(),
+          element_type: p.element_type ?? null,
+          price: typeof p.price === 'number' ? p.price : null,
+          team: String(p.team ?? '').trim(),
+          points: typeof p.points === 'number' ? p.points : null,
+        }))
+        .filter((p) => p.id && /^\d+$/.test(p.id) && p.name);
 
-      const arr: ApiPlayer[] = Array.isArray(dataPlayers?.players) ? dataPlayers.players : [];
-      const uiPlayers: UiPlayer[] = arr.map((p) => ({
-        name: (p.name ?? '').trim(),
-        element_type: p.element_type ?? null,
-        price: toNum(p.price) || null,
-        team: (p.team ?? '').trim(),
-        points: toNum(p.points) || null,
-      }));
-      setPlayers(uiPlayers);
-
-      const nextStats: StatsIndex = {};
-      const loadGw = async (gw?: number) => {
-        if (!gw) return;
-        const url = `/api/fpl?op=players&season=${encodeURIComponent(season)}&gw=${gw}`;
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const rows: ApiPlayer[] = Array.isArray(data?.players) ? data.players : [];
-        for (const r of rows) {
-          const key = (r.name ?? '').trim();
-          if (!key) continue;
-          if (!nextStats[key]) nextStats[key] = {};
-          nextStats[key][gw] = { price: toNum(r.price), points: toNum(r.points) };
-        }
-      };
-
-      await Promise.all([loadGw(from), loadGw(to)]);
-      setStatsIndex(nextStats);
-      setShowTeam(true);
+      setPlayers(ui);
     } catch (e) {
-      setErrorPlayers(e instanceof Error ? e.message : 'Failed to load players');
-      setStatsIndex({});
-      setShowTeam(false);
+      const msg = e instanceof Error ? e.message : 'Failed to load players';
+      setErrorPlayers(msg);
+      setPlayers([]);
     } finally {
       setLoadingPlayers(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    loadPlayers();
+  }, []);
+
+  async function importTeam() {
+    setImportError(null);
+    const trimmed = entryId.trim();
+    if (!/^\d{1,10}$/.test(trimmed)) {
+      setImportError('Enter a valid numeric Entry ID.');
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/fpl?op=entry_team&entryId=${encodeURIComponent(trimmed)}&gw=${teamGw}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as ApiEntryTeamResp;
+
+      const squad = Array.isArray(data.squad) ? data.squad : [];
+      if (squad.length !== 15) throw new Error('Could not import a full 15-player squad for that GW.');
+
+      setPrefill(squad);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to import team';
+      setPrefill(null);
+      setImportError(msg);
+    }
+  }
 
   return (
     <main className="font-sans text-[#1f1f1f]">
       <Navbar />
       <HeroSection />
+
       <section className="px-6 -mt-10">
         <div className="mx-auto max-w-6xl rounded-2xl border border-emerald-200/40 bg-white/80 p-5 shadow-[0_8px_30px_rgba(31,38,135,0.12)] backdrop-blur">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="flex flex-col gap-4 md:flex-row md:items-end">
-              <SeasonPicker value={season} onChange={setSeason} />
-              <GameweekPicker />
-            </div>
-            <div className="flex justify-start md:justify-end">
-              <SimulateButton onClick={handleSimulate} />
+              <GameweekPicker value={teamGw} onChange={setTeamGw} label="Team GW" />
+
+              <div className="flex flex-col">
+                <label className="text-xs font-semibold text-slate-700">Entry ID</label>
+                <input
+                  value={entryId}
+                  onChange={(e) => setEntryId(e.target.value)}
+                  placeholder="e.g. 1234567"
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none bg-white"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={importTeam}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                Import Team
+              </button>
             </div>
           </div>
-          {errorPlayers && <p className="mt-3 text-sm text-red-600">Error: {errorPlayers}</p>}
+
+          {loadingPlayers && <p className="mt-3 text-sm text-slate-600">Loading players</p>}
+          {errorPlayers && <p className="mt-3 text-sm text-red-600">Error {errorPlayers}</p>}
+          {importError && <p className="mt-3 text-sm text-red-600">Error {importError}</p>}
+          {prefill && <p className="mt-3 text-sm text-emerald-700">Imported 15 players for GW {teamGw}</p>}
         </div>
       </section>
-      {showTeam && (
-        <TeamGrid
-          season={season}
-          players={players}
-          loading={loadingPlayers}
-          error={errorPlayers}
-          stats={statsIndex}
-          gwFrom={gwFrom}
-          gwTo={gwTo}
-        />
-      )}
+
+      <TeamGrid
+        players={players}
+        loading={loadingPlayers}
+        error={errorPlayers}
+        teamGw={teamGw}
+        prefill={prefill}
+      />
     </main>
   );
 }
