@@ -1,3 +1,4 @@
+// src/app/api/fpl/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -6,14 +7,20 @@ export const revalidate = 0;
 
 type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
 
-type BootstrapEvent = { id: number; finished: boolean };
-type BootstrapTeam = { id: number; name: string };
+type BootstrapEvent = {
+  id: number;
+  finished: boolean;
+  is_current: boolean;
+  is_next: boolean;
+};
+
+type BootstrapTeam = { id: number; name: string; short_name: string };
 type BootstrapElement = {
   id: number;
   web_name: string;
-  element_type: 1 | 2 | 3 | 4;
-  now_cost: number;
+  element_type: number;
   team: number;
+  now_cost: number;
   total_points: number;
 };
 
@@ -23,32 +30,25 @@ type BootstrapStatic = {
   elements: BootstrapElement[];
 };
 
-type Entry = {
-  id: number;
-  name: string;
-  player_first_name: string;
-  player_last_name: string;
-};
+type EntryResponse = { name?: string; player_first_name?: string; player_last_name?: string };
 
-type PicksResp = {
+type PicksResponse = {
   picks: Array<{
     element: number;
     position: number; // 1..15
+    is_captain: boolean;
+    is_vice_captain: boolean;
   }>;
 };
 
-type ElementHistoryRow = { round: number; total_points: number };
-type ElementSummary = { history: ElementHistoryRow[] };
+type ElementHistoryRow = {
+  round: number;
+  total_points: number; // GW points
+  value?: number; // price * 10 at that GW (often present)
+};
 
-type ApiPlayersResp = {
-  players: Array<{
-    id: string;
-    name: string;
-    element_type: ElementType | null;
-    price: number | null;
-    team: string;
-    points: number | null;
-  }>;
+type ElementSummary = {
+  history: ElementHistoryRow[];
 };
 
 type PrefillPlayer = {
@@ -60,6 +60,17 @@ type PrefillPlayer = {
   team: string;
   price: number | null;
   points: number | null;
+};
+
+type ApiPlayersResp = {
+  players: Array<{
+    id: string;
+    name: string;
+    element_type: ElementType | null;
+    price: number | null;
+    team: string;
+    points: number | null;
+  }>;
 };
 
 type ApiEntryTeamResp = {
@@ -77,230 +88,260 @@ type ApiStatsResp = {
   stats: Record<
     string,
     {
-      from: { gw: number; points: number; found: boolean };
-      to: { gw: number; points: number; found: boolean };
+      from: { gw: number; points: number; price: number; found: boolean; priceFound: boolean };
+      to: { gw: number; points: number; price: number; found: boolean; priceFound: boolean };
     }
   >;
   missing: Array<{ id: string; reason: string }>;
 };
 
-function elementTypeToUi(t: number): ElementType | null {
-  if (t === 1) return 'GK';
-  if (t === 2) return 'DEF';
-  if (t === 3) return 'MID';
-  if (t === 4) return 'FWD';
+function normalizeElementType(n: number): ElementType | null {
+  if (n === 1) return 'GK';
+  if (n === 2) return 'DEF';
+  if (n === 3) return 'MID';
+  if (n === 4) return 'FWD';
   return null;
-}
-
-function toPrice(now_cost: number | null | undefined): number | null {
-  if (typeof now_cost !== 'number' || !Number.isFinite(now_cost)) return null;
-  return now_cost / 10;
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error(t || `HTTP ${res.status}`);
-  }
-  const data: unknown = await res.json();
-  return data as T;
 }
 
 function lastFinishedGw(events: BootstrapEvent[]): number {
   let last = 0;
   for (const e of events) {
-    if (e && e.finished === true) last = Math.max(last, e.id);
+    if (e.finished && Number.isFinite(e.id)) last = Math.max(last, e.id);
   }
   return last;
 }
 
-function parseIds(csv: string): string[] {
-  return csv
+async function fetchJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, {
+    cache: 'no-store',
+    headers: {
+      'user-agent': 'fpl-simulator/1.0',
+      accept: 'application/json',
+    },
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status} for ${url}${txt ? `: ${txt}` : ''}`);
+  }
+  return (await res.json()) as T;
+}
+
+function parseIds(raw: string): string[] {
+  return raw
     .split(',')
     .map((s) => s.trim())
     .filter((s) => /^\d+$/.test(s));
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
   let i = 0;
 
-  const workers = Array.from({ length: Math.max(1, limit) }, async () => {
-    while (true) {
-      const idx = i;
-      i += 1;
-      if (idx >= items.length) break;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
       out[idx] = await fn(items[idx]);
     }
-  });
+  }
 
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
   await Promise.all(workers);
   return out;
+}
+
+function priceAtOrBefore(hist: ElementHistoryRow[], gw: number): { price: number; found: boolean } {
+  let bestRound = -1;
+  let bestValue: number | null = null;
+
+  for (const h of hist) {
+    if (h.round <= gw && typeof h.value === 'number' && Number.isFinite(h.value)) {
+      if (h.round > bestRound) {
+        bestRound = h.round;
+        bestValue = h.value;
+      }
+    }
+  }
+
+  if (bestValue == null) return { price: 0, found: false };
+  return { price: bestValue / 10, found: true };
+}
+
+function cumulativePointsUpTo(hist: ElementHistoryRow[], gw: number): { points: number; found: boolean } {
+  let sum = 0;
+  let any = false;
+  for (const h of hist) {
+    if (h.round <= gw) {
+      sum += Number(h.total_points) || 0;
+      any = true;
+    }
+  }
+  return { points: sum, found: any };
 }
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   const op = q.get('op');
 
-  try {
-    if (op === 'players') {
-      const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
+  // ---------- players ----------
+  if (op === 'players') {
+    const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
 
-      const teamName = new Map<number, string>();
-      for (const t of boot.teams ?? []) teamName.set(t.id, t.name);
+    const teamName = new Map<number, string>();
+    for (const t of boot.teams ?? []) teamName.set(t.id, t.name);
 
-      const players: ApiPlayersResp['players'] = (boot.elements ?? []).map((e) => ({
-        id: String(e.id),
-        name: String(e.web_name ?? '').trim(),
-        element_type: elementTypeToUi(e.element_type),
-        price: toPrice(e.now_cost),
-        team: teamName.get(e.team) ?? '',
-        points: typeof e.total_points === 'number' ? e.total_points : null,
-      }));
+    const players = (boot.elements ?? []).map((e) => ({
+      id: String(e.id),
+      name: e.web_name,
+      element_type: normalizeElementType(e.element_type),
+      price: Number.isFinite(e.now_cost) ? e.now_cost / 10 : null,
+      team: teamName.get(e.team) ?? '',
+      points: Number.isFinite(e.total_points) ? e.total_points : null,
+    }));
 
-      return NextResponse.json({ players } satisfies ApiPlayersResp);
+    const resp: ApiPlayersResp = { players };
+    return NextResponse.json(resp);
+  }
+
+  // ---------- entry_team ----------
+  if (op === 'entry_team') {
+    const entryIdRaw = q.get('entryId') ?? '';
+    const gwRaw = q.get('gw') ?? '';
+
+    const entryId = Number(entryIdRaw);
+    const gw = Number(gwRaw);
+
+    if (!Number.isFinite(entryId) || entryId <= 0) {
+      return NextResponse.json({ error: 'entryId required' }, { status: 400 });
+    }
+    if (!Number.isFinite(gw) || gw <= 0) {
+      return NextResponse.json({ error: 'gw required' }, { status: 400 });
     }
 
-    if (op === 'entry_team') {
-      const entryIdRaw = q.get('entryId') ?? '';
-      const gwRaw = q.get('gw') ?? '';
-
-      if (!/^\d{1,10}$/.test(entryIdRaw)) return NextResponse.json({ error: 'entryId required' }, { status: 400 });
-      if (!/^\d{1,2}$/.test(gwRaw)) return NextResponse.json({ error: 'gw required' }, { status: 400 });
-
-      const entryId = Number(entryIdRaw);
-      const gw = Number(gwRaw);
-
-      const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
-      const lastGw = lastFinishedGw(boot.events ?? []);
-      if (lastGw > 0 && gw > lastGw) {
-        return NextResponse.json(
-          { error: `Team GW (${gw}) is beyond last finished GW (${lastGw}).` },
-          { status: 400 }
-        );
-      }
-
-      const teamName = new Map<number, string>();
-      for (const t of boot.teams ?? []) teamName.set(t.id, t.name);
-
-      const elementsById = new Map<number, BootstrapElement>();
-      for (const e of boot.elements ?? []) elementsById.set(e.id, e);
-
-      const [entry, picks] = await Promise.all([
-        fetchJson<Entry>(`https://fantasy.premierleague.com/api/entry/${entryId}/`),
-        fetchJson<PicksResp>(`https://fantasy.premierleague.com/api/entry/${entryId}/event/${gw}/picks/`),
-      ]);
-
-      const managerName = `${String(entry.player_first_name ?? '').trim()} ${String(entry.player_last_name ?? '').trim()}`.trim();
-      const teamDisplay = String(entry.name ?? '').trim();
-
-      const squad: PrefillPlayer[] = (picks.picks ?? [])
-        .slice()
-        .sort((a, b) => a.position - b.position)
-        .map((p) => {
-          const el = elementsById.get(p.element);
-          const name = el ? String(el.web_name ?? '').trim() : `#${p.element}`;
-          const type = el ? elementTypeToUi(el.element_type) : null;
-          const team = el ? teamName.get(el.team) ?? '' : '';
-          const price = el ? toPrice(el.now_cost) : null;
-          const points = el && typeof el.total_points === 'number' ? el.total_points : null;
-
-          return {
-            slot: p.position,
-            isBench: p.position > 11,
-            id: String(p.element),
-            name,
-            element_type: type,
-            team,
-            price,
-            points,
-          };
-        });
-
-      if (squad.length !== 15) {
-        return NextResponse.json({ error: 'Could not import a full 15-player squad for that GW.' }, { status: 400 });
-      }
-
-      const resp: ApiEntryTeamResp = {
-        entryId,
-        gw,
-        teamName: teamDisplay || null,
-        managerName: managerName || null,
-        squad,
-      };
-
-      return NextResponse.json(resp);
+    const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
+    const lastGw = lastFinishedGw(boot.events ?? []);
+    if (lastGw > 0 && gw > lastGw) {
+      return NextResponse.json({ error: `GW (${gw}) is beyond last finished GW (${lastGw}).` }, { status: 400 });
     }
 
-    if (op === 'stats') {
-      const idsRaw = q.get('ids') ?? '';
-      const fromRaw = q.get('from') ?? '';
-      const toRaw = q.get('to') ?? '';
+    const teamName = new Map<number, string>();
+    for (const t of boot.teams ?? []) teamName.set(t.id, t.name);
 
-      const from = Number(fromRaw);
-      const to = Number(toRaw);
+    const elementById = new Map<number, BootstrapElement>();
+    for (const e of boot.elements ?? []) elementById.set(e.id, e);
 
-      if (!idsRaw) return NextResponse.json({ error: 'ids required' }, { status: 400 });
-      if (!Number.isFinite(from) || !Number.isFinite(to)) {
-        return NextResponse.json({ error: 'from and to are required numbers' }, { status: 400 });
-      }
+    const [entry, picks] = await Promise.all([
+      fetchJson<EntryResponse>(`https://fantasy.premierleague.com/api/entry/${entryId}/`),
+      fetchJson<PicksResponse>(`https://fantasy.premierleague.com/api/entry/${entryId}/event/${gw}/picks/`),
+    ]);
 
-      const ids = parseIds(idsRaw);
-      if (!ids.length) return NextResponse.json({ error: 'no valid ids' }, { status: 400 });
+    const teamNameStr = typeof entry.name === 'string' ? entry.name : null;
+    const managerNameStr =
+      [entry.player_first_name, entry.player_last_name]
+        .filter((x) => typeof x === 'string' && x.trim())
+        .join(' ')
+        .trim() || null;
 
-      const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
-      const lastGw = lastFinishedGw(boot.events ?? []);
+    const squad: PrefillPlayer[] = (picks.picks ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map((p) => {
+        const el = elementById.get(p.element);
+        const pos = el ? normalizeElementType(el.element_type) : null;
+        const price = el && Number.isFinite(el.now_cost) ? el.now_cost / 10 : null;
+        const totalPoints = el && Number.isFinite(el.total_points) ? el.total_points : null;
 
-      const maxGw = Math.max(from, to);
-      if (lastGw > 0 && maxGw > lastGw) {
-        return NextResponse.json(
-          { error: `Simulation to-GW (${maxGw}) is beyond last finished GW (${lastGw}).` },
-          { status: 400 }
-        );
-      }
-
-      const missing: Array<{ id: string; reason: string }> = [];
-
-      const results = await mapLimit(ids, 10, async (id) => {
-        try {
-          const data = await fetchJson<ElementSummary>(`https://fantasy.premierleague.com/api/element-summary/${id}/`);
-          return { id, ok: true as const, data };
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : 'element-summary failed';
-          return { id, ok: false as const, reason: msg };
-        }
+        return {
+          slot: p.position,
+          isBench: p.position >= 12,
+          id: String(p.element),
+          name: el?.web_name ?? `#${p.element}`,
+          element_type: pos,
+          team: el ? teamName.get(el.team) ?? '' : '',
+          price,
+          points: totalPoints,
+        };
       });
 
-      const stats: ApiStatsResp['stats'] = {};
+    const resp: ApiEntryTeamResp = {
+      entryId,
+      gw,
+      teamName: teamNameStr,
+      managerName: managerNameStr,
+      squad,
+    };
 
-      for (const r of results) {
-        if (!r.ok) {
-          missing.push({ id: r.id, reason: r.reason });
-          stats[r.id] = {
-            from: { gw: from, points: 0, found: false },
-            to: { gw: to, points: 0, found: false },
-          };
-          continue;
-        }
+    return NextResponse.json(resp);
+  }
 
-        const hist = Array.isArray(r.data.history) ? r.data.history : [];
-        const fromRow = hist.find((h) => h.round === from);
-        const toRow = hist.find((h) => h.round === to);
+  // ---------- stats (cumulative points + price at GW) ----------
+  if (op === 'stats') {
+    const idsRaw = q.get('ids') ?? '';
+    const fromRaw = q.get('from') ?? '';
+    const toRaw = q.get('to') ?? '';
 
-        stats[r.id] = {
-          from: { gw: from, points: fromRow ? Number(fromRow.total_points) : 0, found: !!fromRow },
-          to: { gw: to, points: toRow ? Number(toRow.total_points) : 0, found: !!toRow },
-        };
-      }
+    const from = Number(fromRaw);
+    const to = Number(toRaw);
 
-      const resp: ApiStatsResp = { from, to, lastFinishedGw: lastGw, stats, missing };
-      return NextResponse.json(resp);
+    if (!idsRaw) return NextResponse.json({ error: 'ids required' }, { status: 400 });
+    if (!Number.isFinite(from) || !Number.isFinite(to)) {
+      return NextResponse.json({ error: 'from and to are required numbers' }, { status: 400 });
     }
 
-    return NextResponse.json({ error: 'unknown op' }, { status: 400 });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Server error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const ids = parseIds(idsRaw);
+    if (!ids.length) return NextResponse.json({ error: 'no valid ids' }, { status: 400 });
+
+    const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
+    const lastGw = lastFinishedGw(boot.events ?? []);
+    const maxGw = Math.max(from, to);
+
+    if (lastGw > 0 && maxGw > lastGw) {
+      return NextResponse.json(
+        { error: `Simulation to-GW (${maxGw}) is beyond last finished GW (${lastGw}).` },
+        { status: 400 }
+      );
+    }
+
+    const missing: Array<{ id: string; reason: string }> = [];
+
+    const results = await mapLimit(ids, 10, async (id) => {
+      try {
+        const data = await fetchJson<ElementSummary>(`https://fantasy.premierleague.com/api/element-summary/${id}/`);
+        return { id, ok: true as const, data };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'element-summary failed';
+        return { id, ok: false as const, reason: msg };
+      }
+    });
+
+    const stats: ApiStatsResp['stats'] = {};
+
+    for (const r of results) {
+      if (!r.ok) {
+        missing.push({ id: r.id, reason: r.reason });
+        stats[r.id] = {
+          from: { gw: from, points: 0, price: 0, found: false, priceFound: false },
+          to: { gw: to, points: 0, price: 0, found: false, priceFound: false },
+        };
+        continue;
+      }
+
+      const hist = Array.isArray(r.data.history) ? r.data.history : [];
+
+      const fromPts = cumulativePointsUpTo(hist, from);
+      const toPts = cumulativePointsUpTo(hist, to);
+
+      const fromPrice = priceAtOrBefore(hist, from);
+      const toPrice = priceAtOrBefore(hist, to);
+
+      stats[r.id] = {
+        from: { gw: from, points: fromPts.points, price: fromPrice.price, found: fromPts.found, priceFound: fromPrice.found },
+        to: { gw: to, points: toPts.points, price: toPrice.price, found: toPts.found, priceFound: toPrice.found },
+      };
+    }
+
+    const resp: ApiStatsResp = { from, to, lastFinishedGw: lastGw, stats, missing };
+    return NextResponse.json(resp);
   }
+
+  return NextResponse.json({ error: 'unknown op' }, { status: 400 });
 }
