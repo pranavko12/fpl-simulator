@@ -45,6 +45,7 @@ type ApiEntryTeamResp = {
   teamName: string | null;
   managerName: string | null;
   squad: PrefillPlayer[];
+  teamValue?: number | null; // expected from API
 };
 
 export default function SimulatorPage() {
@@ -57,6 +58,7 @@ export default function SimulatorPage() {
   const [prefill, setPrefill] = useState<PrefillPlayer[] | null>(null);
 
   const [teamGw, setTeamGw] = useState<number>(1);
+  const [teamValue, setTeamValue] = useState<number | null>(null);
 
   async function loadPlayers() {
     setLoadingPlayers(true);
@@ -111,9 +113,13 @@ export default function SimulatorPage() {
       if (squad.length !== 15) throw new Error('Could not import a full 15-player squad for that GW.');
 
       setPrefill(squad);
+
+      const tv = typeof data.teamValue === 'number' && Number.isFinite(data.teamValue) ? data.teamValue : null;
+      setTeamValue(tv);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to import team';
       setPrefill(null);
+      setTeamValue(null);
       setImportError(msg);
     }
   }
@@ -134,7 +140,7 @@ export default function SimulatorPage() {
                 <input
                   value={entryId}
                   onChange={(e) => setEntryId(e.target.value)}
-                  placeholder="e.g. 1234567"
+                  placeholder="e.g. 3233026"
                   className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none bg-white"
                 />
               </div>
@@ -162,6 +168,7 @@ export default function SimulatorPage() {
         error={errorPlayers}
         teamGw={teamGw}
         prefill={prefill}
+        teamValue={teamValue}
       />
     </main>
   );

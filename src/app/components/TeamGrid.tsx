@@ -31,23 +31,7 @@ type Props = {
   error?: string | null;
   teamGw: number;
   prefill: PrefillPlayer[] | null;
-};
-
-type GwStat = { points: number; found: boolean };
-type StatsIndex = Record<string, Record<number, GwStat>>;
-
-type ApiStatsResp = {
-  from: number;
-  to: number;
-  lastFinishedGw: number;
-  stats: Record<
-    string,
-    {
-      from: { gw: number; points: number; found: boolean };
-      to: { gw: number; points: number; found: boolean };
-    }
-  >;
-  missing: Array<{ id: string; reason: string }>;
+  teamValue?: number | null; // imported team value
 };
 
 const FORMATIONS = [
@@ -82,7 +66,17 @@ const ELEMENT_TYPE_MAP: Record<string, ElementType> = {
   Forwards: 'FWD',
 };
 
-export default function TeamGrid({ players, loading, error, teamGw, prefill }: Props) {
+function toNum(x: number | string | null | undefined): number {
+  if (x == null || x === '') return 0;
+  const n = Number(String(x).replace(/,/g, '').trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+function fmtM(n: number): string {
+  return `${n.toFixed(1)}M`;
+}
+
+export default function TeamGrid({ players, loading, error, teamGw, prefill, teamValue }: Props) {
   const [formation, setFormation] = useState<[number, number, number]>([4, 4, 2]);
 
   const [showModal, setShowModal] = useState(false);
@@ -93,12 +87,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
   const [maxPriceFilter, setMaxPriceFilter] = useState<string>('Any');
   const [searchQ, setSearchQ] = useState<string>('');
   const [sortKey, setSortKey] = useState<'points_desc' | 'price_desc' | 'price_asc'>('points_desc');
-
-  const [simFromGw, setSimFromGw] = useState<number>(teamGw);
-  const [simToGw, setSimToGw] = useState<number>(teamGw);
-  const [statsIndex, setStatsIndex] = useState<StatsIndex>({});
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError] = useState<string | null>(null);
 
   const positions = useMemo(() => {
     return {
@@ -181,14 +169,7 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
       Forwards: Array.from({ length: autoFormation[2] }, (_, i) => (fwds[i] ? pick(fwds[i]) : null)),
       Bench: Array.from({ length: 4 }, (_, i) => (bench[i] ? pick(bench[i]) : null)),
     });
-
-    setSimFromGw(teamGw);
-    setSimToGw(teamGw);
-    setStatsIndex({});
-    setStatsError(null);
-  }, [prefill, players, teamGw]);
-
-  const gwOptions = useMemo(() => Array.from({ length: 38 }, (_, i) => i + 1), []);
+  }, [prefill, players]);
 
   const handleAddClick = (position: string, idx: number) => {
     setModalPosition(position);
@@ -198,12 +179,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
     setSearchQ('');
     setSortKey('points_desc');
     setShowModal(true);
-  };
-
-  const toNum = (x: number | string | null | undefined): number => {
-    if (x == null || x === '') return 0;
-    const n = Number(String(x).replace(/,/g, '').trim());
-    return Number.isFinite(n) ? n : 0;
   };
 
   const pickedPlayers: UiPlayer[] = useMemo(() => {
@@ -291,56 +266,21 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
   const totalSpent = useMemo(() => pickedPlayers.reduce((sum, p) => sum + toNum(p.price), 0), [pickedPlayers]);
   const budgetLeft = 100 - totalSpent;
   const isOverBudget = budgetLeft < 0;
-  const hasFullSquad = pickedPlayers.length === 15;
-  const canSimulate = !isOverBudget && hasFullSquad;
 
-  const fmtM = (n: number) => `${n.toFixed(1)}M`;
+  const hasFullSquad = pickedPlayers.length === 15;
+
+  // IMPORTANT: if team is imported, don't block simulation on 100M (prices move).
+  const isImported = !!prefill && prefill.length === 15;
+  const canSimulate = hasFullSquad && (isImported ? true : !isOverBudget);
 
   const resetTeam = () => {
     setSelected(emptySelection);
-    setStatsIndex({});
-    setStatsError(null);
   };
-
-  async function runSimulationFetch(from: number, to: number) {
-    if (!canSimulate) return;
-
-    setStatsLoading(true);
-    setStatsError(null);
-
-    try {
-      const ids = pickedPlayers.map((p) => String(p.id)).join(',');
-      const url = `/api/fpl?op=stats&ids=${encodeURIComponent(ids)}&from=${from}&to=${to}`;
-      const res = await fetch(url, { cache: 'no-store' });
-
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || `HTTP ${res.status}`);
-      }
-
-      const data = (await res.json()) as ApiStatsResp;
-
-      const next: StatsIndex = {};
-      for (const [id, v] of Object.entries(data.stats ?? {})) {
-        next[id] = {
-          [data.from]: { points: v.from.points, found: v.from.found },
-          [data.to]: { points: v.to.points, found: v.to.found },
-        };
-      }
-
-      setStatsIndex(next);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Simulation failed';
-      setStatsIndex({});
-      setStatsError(msg);
-    } finally {
-      setStatsLoading(false);
-    }
-  }
 
   return (
     <div className="py-8 px-4 flex justify-center">
       <div className="max-w-5xl w-full mx-auto space-y-8 rounded-2xl bg-[url('/pitch.png')] bg-cover bg-center shadow-lg p-6">
+        {/* HEADER */}
         <div className="flex flex-col md:flex-row items-center gap-3 justify-center mb-6">
           <div className="flex items-center gap-3">
             <label className="text-white font-semibold text-base">Formation</label>
@@ -357,8 +297,9 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
             </select>
           </div>
 
-          <div className={`${budgetLeft < 0 ? 'bg-red-600 text-white' : 'bg-white/90 text-gray-900'} px-3 py-1 rounded text-sm font-semibold`}>
-            {fmtM(budgetLeft)} left
+          {/* Imported team value wins */}
+          <div className="px-3 py-1 rounded text-sm font-semibold bg-white/90 text-gray-900">
+            {typeof teamValue === 'number' && Number.isFinite(teamValue) ? `Team Value ${fmtM(teamValue)}` : `Spent ${fmtM(totalSpent)}`}
           </div>
 
           <button
@@ -371,11 +312,10 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
             Reset Team
           </button>
 
-          <div className="ml-0 md:ml-4 text-sm font-semibold text-white/90">
-            Team GW {teamGw}
-          </div>
+          <div className="ml-0 md:ml-4 text-sm font-semibold text-white/90">Team GW {teamGw}</div>
         </div>
 
+        {/* PITCH (positions) */}
         {Object.entries(positions).map(([pos, count]) => (
           <div key={pos}>
             <h3 className="text-center text-white text-lg font-semibold mb-3 drop-shadow">{pos}</h3>
@@ -404,6 +344,7 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
           </div>
         ))}
 
+        {/* MODAL */}
         {showModal && (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl p-6 max-h-[80vh] w-[90vw] max-w-3xl overflow-y-auto shadow-lg relative">
@@ -476,13 +417,13 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
 
                   <ul className="space-y-2">
                     {filteredPlayers.length === 0 && <li className="text-sm text-slate-500">No players match</li>}
-                    {filteredPlayers.map((p, i) => {
+                    {filteredPlayers.map((p) => {
                       const priceVal = toNum(p.price);
                       const priceDisplay = priceVal ? `${priceVal.toFixed(1)}M` : '';
                       const pts = typeof p.points === 'number' ? p.points : 0;
                       return (
                         <li
-                          key={`${p.id}-${i}`}
+                          key={p.id}
                           className="p-3 rounded hover:bg-blue-100 cursor-pointer transition flex flex-col"
                           onClick={() => choosePlayer(p)}
                         >
@@ -507,79 +448,23 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill }: P
           </div>
         )}
 
-        <div className="mt-2 flex flex-col gap-3 items-center">
-          <div className="flex flex-col md:flex-row items-center gap-3">
-            <div className="flex flex-col">
-              <label className="text-xs font-semibold text-white/90">Sim From</label>
-              <select
-                className="px-3 py-2 rounded bg-white/90 text-gray-800 font-semibold shadow focus:outline-none"
-                value={simFromGw}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setSimFromGw(v);
-                  if (v > simToGw) setSimToGw(v);
-                }}
-                disabled={!canSimulate}
-              >
-                {gwOptions.map((gw) => (
-                  <option key={gw} value={gw}>
-                    GW {gw}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex flex-col">
-              <label className="text-xs font-semibold text-white/90">Sim To</label>
-              <select
-                className="px-3 py-2 rounded bg-white/90 text-gray-800 font-semibold shadow focus:outline-none"
-                value={simToGw}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setSimToGw(v);
-                  if (v < simFromGw) setSimFromGw(v);
-                }}
-                disabled={!canSimulate}
-              >
-                {gwOptions.map((gw) => (
-                  <option key={gw} value={gw}>
-                    GW {gw}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => runSimulationFetch(simFromGw, simToGw)}
-              disabled={!canSimulate || statsLoading}
-              className={[
-                'rounded-xl px-5 py-3 text-base font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2',
-                !canSimulate || statsLoading
-                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
-                  : 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-600',
-              ].join(' ')}
-            >
-              {statsLoading ? 'Simulating' : 'Simulate'}
-            </button>
-          </div>
-
-          {statsError && (
-            <div className="text-sm text-red-200 bg-red-950/30 border border-red-400/30 px-4 py-2 rounded">
-              {statsError}
-            </div>
-          )}
-        </div>
-
+        {/* TABLE ONLY: simulation lives here now */}
         <div className="flex justify-center">
           <SimulatePanel
-            players={pickedPlayers.map((p) => ({ id: p.id, name: p.name, element_type: p.element_type ?? null }))}
-            fromGw={simFromGw}
-            toGw={simToGw}
-            stats={statsIndex}
+            players={pickedPlayers.map((p) => ({
+              id: p.id,
+              name: p.name,
+              element_type: p.element_type ?? null,
+            }))}
             disabled={!canSimulate}
           />
         </div>
+
+        {!canSimulate && (
+          <div className="text-center text-sm text-white/90">
+            {hasFullSquad ? (isImported ? '' : 'Over budget. Adjust picks or import a team.') : 'Select all 15 players to enable simulation.'}
+          </div>
+        )}
       </div>
     </div>
   );
