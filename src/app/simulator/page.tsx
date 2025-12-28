@@ -45,7 +45,7 @@ type ApiEntryTeamResp = {
   teamName: string | null;
   managerName: string | null;
   squad: PrefillPlayer[];
-  teamValue?: number | null; // expected from API
+  teamValue?: number | null;
 };
 
 export default function SimulatorPage() {
@@ -93,8 +93,16 @@ export default function SimulatorPage() {
     loadPlayers();
   }, []);
 
+  // If user changes GW, previously imported team is no longer valid
+  useEffect(() => {
+    setPrefill(null);
+    setTeamValue(null);
+    setImportError(null);
+  }, [teamGw]);
+
   async function importTeam() {
     setImportError(null);
+
     const trimmed = entryId.trim();
     if (!/^\d{1,10}$/.test(trimmed)) {
       setImportError('Enter a valid numeric Entry ID.');
@@ -110,7 +118,7 @@ export default function SimulatorPage() {
       const data = (await res.json()) as ApiEntryTeamResp;
 
       const squad = Array.isArray(data.squad) ? data.squad : [];
-      if (squad.length !== 15) throw new Error('Could not import a full 15-player squad for that GW.');
+      if (squad.length !== 15) throw new Error('Could not import a full 15 player squad for that GW.');
 
       setPrefill(squad);
 

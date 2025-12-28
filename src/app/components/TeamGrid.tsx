@@ -31,7 +31,24 @@ type Props = {
   error?: string | null;
   teamGw: number;
   prefill: PrefillPlayer[] | null;
-  teamValue?: number | null; // imported team value
+  teamValue?: number | null;
+};
+
+type GwStat = { gw: number; points: number; price: number; found: boolean };
+type StatsIndex = Record<string, Record<number, GwStat>>;
+
+type ApiStatsResp = {
+  from: number;
+  to: number;
+  lastFinishedGw: number;
+  stats: Record<
+    string,
+    {
+      from: { gw: number; points: number; price: number; found: boolean; priceFound?: boolean };
+      to: { gw: number; points: number; price: number; found: boolean; priceFound?: boolean };
+    }
+  >;
+  missing: Array<{ id: string; reason: string }>;
 };
 
 const FORMATIONS = [
@@ -87,6 +104,22 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
   const [maxPriceFilter, setMaxPriceFilter] = useState<string>('Any');
   const [searchQ, setSearchQ] = useState<string>('');
   const [sortKey, setSortKey] = useState<'points_desc' | 'price_desc' | 'price_asc'>('points_desc');
+
+  // Simulation controls
+  const [simFromGw, setSimFromGw] = useState<number>(teamGw);
+  const [simToGw, setSimToGw] = useState<number>(teamGw);
+  const [statsIndex, setStatsIndex] = useState<StatsIndex | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [hasRun, setHasRun] = useState(false);
+
+  useEffect(() => {
+    setSimFromGw(teamGw);
+    setSimToGw(teamGw);
+    setStatsIndex(null);
+    setStatsError(null);
+    setHasRun(false);
+  }, [teamGw]);
 
   const positions = useMemo(() => {
     return {
@@ -169,6 +202,10 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
       Forwards: Array.from({ length: autoFormation[2] }, (_, i) => (fwds[i] ? pick(fwds[i]) : null)),
       Bench: Array.from({ length: 4 }, (_, i) => (bench[i] ? pick(bench[i]) : null)),
     });
+
+    setStatsIndex(null);
+    setStatsError(null);
+    setHasRun(false);
   }, [prefill, players]);
 
   const handleAddClick = (position: string, idx: number) => {
@@ -261,6 +298,11 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
     setShowModal(false);
     setModalPosition(null);
     setModalIndex(null);
+
+    // Changing picks invalidates previous run
+    setStatsIndex(null);
+    setStatsError(null);
+    setHasRun(false);
   };
 
   const totalSpent = useMemo(() => pickedPlayers.reduce((sum, p) => sum + toNum(p.price), 0), [pickedPlayers]);
@@ -269,18 +311,60 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
 
   const hasFullSquad = pickedPlayers.length === 15;
 
-  // IMPORTANT: if team is imported, don't block simulation on 100M (prices move).
+  // If imported, don't block by 100M (prices move). If manual, enforce budget.
   const isImported = !!prefill && prefill.length === 15;
-  const canSimulate = hasFullSquad && (isImported ? true : !isOverBudget);
+  const canRun = hasFullSquad && (isImported ? true : !isOverBudget);
+
+  const gwOptions = useMemo(() => Array.from({ length: 38 }, (_, i) => i + 1), []);
 
   const resetTeam = () => {
     setSelected(emptySelection);
+    setStatsIndex(null);
+    setStatsError(null);
+    setHasRun(false);
   };
+
+  async function runSimulationFetch(from: number, to: number) {
+    if (!canRun) return;
+
+    setStatsLoading(true);
+    setStatsError(null);
+
+    try {
+      const ids = pickedPlayers.map((p) => String(p.id)).join(',');
+      const url = `/api/fpl?op=stats&ids=${encodeURIComponent(ids)}&from=${from}&to=${to}`;
+      const res = await fetch(url, { cache: 'no-store' });
+
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `HTTP ${res.status}`);
+      }
+
+      const data = (await res.json()) as ApiStatsResp;
+
+      const next: StatsIndex = {};
+      for (const [id, v] of Object.entries(data.stats ?? {})) {
+        next[id] = {
+          [data.from]: { gw: data.from, points: v.from.points, price: v.from.price, found: !!v.from.found },
+          [data.to]: { gw: data.to, points: v.to.points, price: v.to.price, found: !!v.to.found },
+        };
+      }
+
+      setStatsIndex(next);
+      setHasRun(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Simulation failed';
+      setStatsIndex(null);
+      setStatsError(msg);
+      setHasRun(false);
+    } finally {
+      setStatsLoading(false);
+    }
+  }
 
   return (
     <div className="py-8 px-4 flex justify-center">
       <div className="max-w-5xl w-full mx-auto space-y-8 rounded-2xl bg-[url('/pitch.png')] bg-cover bg-center shadow-lg p-6">
-        {/* HEADER */}
         <div className="flex flex-col md:flex-row items-center gap-3 justify-center mb-6">
           <div className="flex items-center gap-3">
             <label className="text-white font-semibold text-base">Formation</label>
@@ -297,9 +381,14 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
             </select>
           </div>
 
-          {/* Imported team value wins */}
-          <div className="px-3 py-1 rounded text-sm font-semibold bg-white/90 text-gray-900">
-            {typeof teamValue === 'number' && Number.isFinite(teamValue) ? `Team Value ${fmtM(teamValue)}` : `Spent ${fmtM(totalSpent)}`}
+          <div
+            className={`px-3 py-1 rounded text-sm font-semibold ${
+              !isImported && budgetLeft < 0 ? 'bg-red-600 text-white' : 'bg-white/90 text-gray-900'
+            }`}
+          >
+            {typeof teamValue === 'number' && Number.isFinite(teamValue)
+              ? `Team Value ${fmtM(teamValue)}`
+              : `Spent ${fmtM(totalSpent)} (${fmtM(budgetLeft)} left)`}
           </div>
 
           <button
@@ -315,7 +404,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
           <div className="ml-0 md:ml-4 text-sm font-semibold text-white/90">Team GW {teamGw}</div>
         </div>
 
-        {/* PITCH (positions) */}
         {Object.entries(positions).map(([pos, count]) => (
           <div key={pos}>
             <h3 className="text-center text-white text-lg font-semibold mb-3 drop-shadow">{pos}</h3>
@@ -344,7 +432,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
           </div>
         ))}
 
-        {/* MODAL */}
         {showModal && (
           <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl p-6 max-h-[80vh] w-[90vw] max-w-3xl overflow-y-auto shadow-lg relative">
@@ -368,7 +455,11 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
               {!loading && !error && (
                 <>
                   <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
-                    <select className="w-full rounded border px-3 py-2 text-sm" value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
+                    <select
+                      className="w-full rounded border px-3 py-2 text-sm"
+                      value={teamFilter}
+                      onChange={(e) => setTeamFilter(e.target.value)}
+                    >
                       {teamOptions.map((t) => (
                         <option key={t} value={t}>
                           {t === 'All' ? 'All Teams' : t}
@@ -376,7 +467,11 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                       ))}
                     </select>
 
-                    <select className="w-full rounded border px-3 py-2 text-sm" value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)}>
+                    <select
+                      className="w-full rounded border px-3 py-2 text-sm"
+                      value={maxPriceFilter}
+                      onChange={(e) => setMaxPriceFilter(e.target.value)}
+                    >
                       {priceRange.steps.map((s) => (
                         <option key={s} value={s}>
                           {s === 'Any' ? 'Max Price Any' : `Max Price ${s}M`}
@@ -448,7 +543,78 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
           </div>
         )}
 
-        {/* TABLE ONLY: simulation lives here now */}
+        {/* RUN CONTROLS (restored) */}
+        <div className="mt-2 flex flex-col gap-3 items-center">
+          <div className="flex flex-col md:flex-row items-center gap-3">
+            <div className="flex flex-col">
+              <label className="text-xs font-semibold text-white/90">Sim From</label>
+              <select
+                className="px-3 py-2 rounded bg-white/90 text-gray-800 font-semibold shadow focus:outline-none"
+                value={simFromGw}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setSimFromGw(v);
+                  if (v > simToGw) setSimToGw(v);
+                }}
+                disabled={!canRun}
+              >
+                {gwOptions.map((gw) => (
+                  <option key={gw} value={gw}>
+                    GW {gw}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-col">
+              <label className="text-xs font-semibold text-white/90">Sim To</label>
+              <select
+                className="px-3 py-2 rounded bg-white/90 text-gray-800 font-semibold shadow focus:outline-none"
+                value={simToGw}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setSimToGw(v);
+                  if (v < simFromGw) setSimFromGw(v);
+                }}
+                disabled={!canRun}
+              >
+                {gwOptions.map((gw) => (
+                  <option key={gw} value={gw}>
+                    GW {gw}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => runSimulationFetch(simFromGw, simToGw)}
+              disabled={!canRun || statsLoading}
+              className={[
+                'rounded-xl px-5 py-3 text-base font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-2',
+                !canRun || statsLoading
+                  ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
+                  : 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-600',
+              ].join(' ')}
+            >
+              {statsLoading ? 'Running…' : 'Run'}
+            </button>
+          </div>
+
+          {statsError && (
+            <div className="text-sm text-red-200 bg-red-950/30 border border-red-400/30 px-4 py-2 rounded">
+              {statsError}
+            </div>
+          )}
+
+          {!canRun && (
+            <div className="text-center text-sm text-white/90">
+              {hasFullSquad ? (isImported ? '' : 'Over budget. Adjust picks or import a team.') : 'Select all 15 players to enable simulation.'}
+            </div>
+          )}
+        </div>
+
+        {/* TABLE (only after Run) */}
         <div className="flex justify-center">
           <SimulatePanel
             players={pickedPlayers.map((p) => ({
@@ -456,15 +622,12 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
               name: p.name,
               element_type: p.element_type ?? null,
             }))}
-            disabled={!canSimulate}
+            fromGw={simFromGw}
+            toGw={simToGw}
+            stats={hasRun ? (statsIndex ?? undefined) : undefined}
+            disabled={!canRun}
           />
         </div>
-
-        {!canSimulate && (
-          <div className="text-center text-sm text-white/90">
-            {hasFullSquad ? (isImported ? '' : 'Over budget. Adjust picks or import a team.') : 'Select all 15 players to enable simulation.'}
-          </div>
-        )}
       </div>
     </div>
   );

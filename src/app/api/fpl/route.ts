@@ -95,6 +95,28 @@ type ApiStatsResp = {
   missing: Array<{ id: string; reason: string }>;
 };
 
+type BetterCandidate = {
+  id: string;
+  name: string;
+  team: string;
+  pos: ElementType;
+  priceFrom: number;
+  priceTo: number;
+  priceDelta: number;
+  pointsFrom: number;
+  pointsTo: number;
+  pointsDelta: number;
+};
+
+type BetterOptionsResp = {
+  player: BetterCandidate;
+  priceBand: { min: number; max: number };
+  topByPriceIncrease: BetterCandidate[];
+  topByPointsGained: BetterCandidate[];
+  recommended: BetterCandidate | null;
+  currentIsBestByPoints: boolean;
+};
+
 function normalizeElementType(n: number): ElementType | null {
   if (n === 1) return 'GK';
   if (n === 2) return 'DEF';
@@ -149,6 +171,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
+// price at GW (or most recent <= GW) from element-summary history.value
 function priceAtOrBefore(hist: ElementHistoryRow[], gw: number): { price: number; found: boolean } {
   let bestRound = -1;
   let bestValue: number | null = null;
@@ -166,6 +189,7 @@ function priceAtOrBefore(hist: ElementHistoryRow[], gw: number): { price: number
   return { price: bestValue / 10, found: true };
 }
 
+// cumulative points from GW1..GW (sum of per-GW points in history.total_points)
 function cumulativePointsUpTo(hist: ElementHistoryRow[], gw: number): { points: number; found: boolean } {
   let sum = 0;
   let any = false;
@@ -176,6 +200,18 @@ function cumulativePointsUpTo(hist: ElementHistoryRow[], gw: number): { points: 
     }
   }
   return { points: sum, found: any };
+}
+
+function parseGwParam(raw: string | null): number | null {
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function validateGwRange(from: number, to: number): string | null {
+  if (from < 1 || to < 1 || from > 38 || to > 38) return 'GW out of range';
+  if (from > to) return 'from must be <= to';
+  return null;
 }
 
 export async function GET(req: NextRequest) {
@@ -286,6 +322,8 @@ export async function GET(req: NextRequest) {
     if (!Number.isFinite(from) || !Number.isFinite(to)) {
       return NextResponse.json({ error: 'from and to are required numbers' }, { status: 400 });
     }
+    const gwErr = validateGwRange(from, to);
+    if (gwErr) return NextResponse.json({ error: gwErr }, { status: 400 });
 
     const ids = parseIds(idsRaw);
     if (!ids.length) return NextResponse.json({ error: 'no valid ids' }, { status: 400 });
@@ -334,13 +372,177 @@ export async function GET(req: NextRequest) {
       const toPrice = priceAtOrBefore(hist, to);
 
       stats[r.id] = {
-        from: { gw: from, points: fromPts.points, price: fromPrice.price, found: fromPts.found, priceFound: fromPrice.found },
-        to: { gw: to, points: toPts.points, price: toPrice.price, found: toPts.found, priceFound: toPrice.found },
+        from: {
+          gw: from,
+          points: fromPts.points,
+          price: fromPrice.price,
+          found: fromPts.found,
+          priceFound: fromPrice.found,
+        },
+        to: {
+          gw: to,
+          points: toPts.points,
+          price: toPrice.price,
+          found: toPts.found,
+          priceFound: toPrice.found,
+        },
       };
     }
 
     const resp: ApiStatsResp = { from, to, lastFinishedGw: lastGw, stats, missing };
     return NextResponse.json(resp);
+  }
+
+  // ---------- better_options ----------
+  // Compares same-position players within ±1.0m of the base player's price at FROM GW,
+  // using ONLY the selected GW window (from..to).
+  if (op === 'better_options') {
+    const playerIdRaw = (q.get('playerId') ?? '').trim();
+    const fromN = parseGwParam(q.get('from'));
+    const toN = parseGwParam(q.get('to'));
+
+    if (!/^\d+$/.test(playerIdRaw)) {
+      return NextResponse.json({ error: 'playerId required' }, { status: 400 });
+    }
+    if (fromN == null || toN == null) {
+      return NextResponse.json({ error: 'from and to are required numbers' }, { status: 400 });
+    }
+
+    const from = fromN;
+    const to = toN;
+
+    const gwErr = validateGwRange(from, to);
+    if (gwErr) return NextResponse.json({ error: gwErr }, { status: 400 });
+
+    const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
+    const lastGw = lastFinishedGw(boot.events ?? []);
+    if (lastGw > 0 && to > lastGw) {
+      return NextResponse.json(
+        { error: `Simulation to-GW (${to}) is beyond last finished GW (${lastGw}).` },
+        { status: 400 }
+      );
+    }
+
+    const teamName = new Map<number, string>();
+    for (const t of boot.teams ?? []) teamName.set(t.id, t.name);
+
+    const elementById = new Map<number, BootstrapElement>();
+    for (const e of boot.elements ?? []) elementById.set(e.id, e);
+
+    const baseEl = elementById.get(Number(playerIdRaw));
+    if (!baseEl) return NextResponse.json({ error: 'Unknown playerId' }, { status: 400 });
+
+    const basePosMaybe = normalizeElementType(baseEl.element_type);
+    if (!basePosMaybe) return NextResponse.json({ error: 'Unsupported player position' }, { status: 400 });
+    const basePos: ElementType = basePosMaybe;
+
+    // Base history at from/to
+    const baseSummary = await fetchJson<ElementSummary>(
+      `https://fantasy.premierleague.com/api/element-summary/${baseEl.id}/`
+    );
+    const baseHist = Array.isArray(baseSummary.history) ? baseSummary.history : [];
+
+    const baseFromPts = cumulativePointsUpTo(baseHist, from);
+    const baseToPts = cumulativePointsUpTo(baseHist, to);
+    const baseFromPrice = priceAtOrBefore(baseHist, from);
+    const baseToPrice = priceAtOrBefore(baseHist, to);
+
+    // You asked that the price band be based on the player's price at FROM GW.
+    // If FPL doesn't provide a historical price value for that GW, we hard-fail (prevents wrong banding).
+    if (!baseFromPrice.found) {
+      return NextResponse.json(
+        { error: 'Base player missing historical price at FROM GW (cannot apply ±1.0m band).' },
+        { status: 400 }
+      );
+    }
+
+    const baseCandidate: BetterCandidate = {
+      id: String(baseEl.id),
+      name: baseEl.web_name,
+      team: teamName.get(baseEl.team) ?? '',
+      pos: basePos,
+      priceFrom: baseFromPrice.price,
+      priceTo: baseToPrice.price,
+      priceDelta: baseToPrice.price - baseFromPrice.price,
+      pointsFrom: baseFromPts.points,
+      pointsTo: baseToPts.points,
+      pointsDelta: baseToPts.points - baseFromPts.points,
+    };
+
+    const minPrice = Math.max(0, baseCandidate.priceFrom - 1.0);
+    const maxPrice = baseCandidate.priceFrom + 1.0;
+
+    // Same-position pool (bootstrap list), then filter by historical price at FROM GW.
+    const posElements = (boot.elements ?? []).filter((e) => normalizeElementType(e.element_type) === basePos);
+
+    const candidates = await mapLimit(posElements, 10, async (el): Promise<BetterCandidate | null> => {
+      try {
+        const s = await fetchJson<ElementSummary>(
+          `https://fantasy.premierleague.com/api/element-summary/${el.id}/`
+        );
+        const hist = Array.isArray(s.history) ? s.history : [];
+
+        const pFrom = priceAtOrBefore(hist, from);
+        if (!pFrom.found) return null;
+
+        const priceFrom = pFrom.price;
+        if (priceFrom < minPrice || priceFrom > maxPrice) return null;
+
+        const pTo = priceAtOrBefore(hist, to);
+        const ptsFrom = cumulativePointsUpTo(hist, from);
+        const ptsTo = cumulativePointsUpTo(hist, to);
+
+        const priceTo = pTo.found ? pTo.price : priceFrom;
+
+        return {
+          id: String(el.id),
+          name: el.web_name,
+          team: teamName.get(el.team) ?? '',
+          pos: basePos,
+          priceFrom,
+          priceTo,
+          priceDelta: priceTo - priceFrom,
+          pointsFrom: ptsFrom.points,
+          pointsTo: ptsTo.points,
+          pointsDelta: ptsTo.points - ptsFrom.points,
+        };
+      } catch {
+        return null;
+      }
+    });
+
+    const uniq = new Map<string, BetterCandidate>();
+    for (const c of candidates) {
+      if (c) uniq.set(c.id, c);
+    }
+    // Ensure base player is included
+    uniq.set(baseCandidate.id, baseCandidate);
+
+    const list = Array.from(uniq.values());
+
+    const topByPriceIncrease = list
+      .slice()
+      .sort((a, b) => b.priceDelta - a.priceDelta || b.pointsDelta - a.pointsDelta)
+      .slice(0, 8);
+
+    const topByPointsGained = list
+      .slice()
+      .sort((a, b) => b.pointsDelta - a.pointsDelta || b.priceDelta - a.priceDelta)
+      .slice(0, 8);
+
+    const recommended = topByPointsGained.length ? topByPointsGained[0] : null;
+    const currentIsBestByPoints = !!recommended && recommended.id === baseCandidate.id;
+
+    const out: BetterOptionsResp = {
+      player: baseCandidate,
+      priceBand: { min: minPrice, max: maxPrice },
+      topByPriceIncrease,
+      topByPointsGained,
+      recommended,
+      currentIsBestByPoints,
+    };
+
+    return NextResponse.json(out);
   }
 
   return NextResponse.json({ error: 'unknown op' }, { status: 400 });

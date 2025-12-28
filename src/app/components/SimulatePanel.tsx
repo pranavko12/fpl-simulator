@@ -7,286 +7,341 @@ type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
 type UiPicked = {
   id: string;
   name: string;
-  element_type: ElementType | null;
+  element_type?: ElementType | null;
 };
 
-type Props = {
+type GwStat = { gw: number; points: number; price: number; found: boolean };
+type StatsIndex = Record<string, Record<number, GwStat>>;
+
+type BetterCandidate = {
+  id: string;
+  name: string;
+  team: string;
+  pos: ElementType;
+  priceFrom: number;
+  priceTo: number;
+  priceDelta: number;
+  pointsFrom: number;
+  pointsTo: number;
+  pointsDelta: number;
+};
+
+type BetterOptionsResp = {
+  player: BetterCandidate;
+  priceBand: { min: number; max: number };
+  topByPriceIncrease: BetterCandidate[];
+  topByPointsGained: BetterCandidate[];
+  recommended: BetterCandidate | null;
+  currentIsBestByPoints: boolean;
+};
+
+export default function SimulatePanel({
+  players,
+  fromGw,
+  toGw,
+  stats,
+  disabled,
+}: {
   players: UiPicked[];
-  className?: string;
+  fromGw: number;
+  toGw: number;
+  stats?: StatsIndex;
   disabled?: boolean;
-};
+}) {
+  type Row = {
+    id: string;
+    name: string;
+    pos: ElementType | null;
+    fromPts: number;
+    toPts: number;
+    ptsDelta: number;
+    fromPrice: number;
+    toPrice: number;
+    priceDelta: number;
+    note: string;
+  };
 
-type GwStat = {
-  gw: number;
-  points: number;
-  price: number;
-  found: boolean;
-};
+  const rows: Row[] = useMemo(() => {
+    if (disabled) return [];
+    if (!stats) return [];
 
-type ApiStatsResp = {
-  from: number;
-  to: number;
-  lastFinishedGw: number;
-  stats: Record<
-    string,
-    {
-      from: GwStat;
-      to: GwStat;
-    }
-  >;
-  missing?: Array<{ id: string; reason: string }>;
-};
-
-function isFiniteNumber(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
-}
-
-function normalizePrice(raw: unknown): number | null {
-  if (!isFiniteNumber(raw)) return null;
-
-  // If backend sends "now_cost" style (e.g. 45 => 4.5), convert.
-  // If backend already sends 4.5, keep it.
-  if (raw >= 25) return raw / 10;
-  return raw;
-}
-
-function fmtPrice(v: number | null): string {
-  if (!isFiniteNumber(v)) return '—';
-  return `${v.toFixed(1)}M`;
-}
-
-export default function SimulatePanel({ players, className, disabled }: Props) {
-  const gwOptions = useMemo(() => Array.from({ length: 38 }, (_, i) => i + 1), []);
-
-  const [fromGw, setFromGw] = useState<number>(1);
-  const [toGw, setToGw] = useState<number>(1);
-
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const [lastFinishedGw, setLastFinishedGw] = useState<number | null>(null);
-
-  // Controls table visibility
-  const [hasRun, setHasRun] = useState(false);
-
-  // Data
-  const [stats, setStats] = useState<ApiStatsResp['stats']>({});
-
-  const idsCsv = useMemo(() => players.map((p) => String(p.id)).join(','), [players]);
-
-  const canRun = !disabled && players.length > 0;
-
-  async function run() {
-    if (!canRun) return;
-
-    setLoading(true);
-    setErr(null);
-
-    try {
-      const url = `/api/fpl?op=stats&ids=${encodeURIComponent(idsCsv)}&from=${fromGw}&to=${toGw}`;
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-
-      const data = (await res.json()) as ApiStatsResp;
-
-      setStats(data.stats ?? {});
-      setLastFinishedGw(isFiniteNumber(data.lastFinishedGw) ? data.lastFinishedGw : null);
-
-      // Only show table after user runs successfully at least once
-      setHasRun(true);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Simulation failed');
-      setStats({});
-      setHasRun(false);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const rows = useMemo(() => {
     return players.map((p) => {
-      const byId = stats[String(p.id)];
-      const from = byId?.from;
-      const to = byId?.to;
+      const byGw = stats[String(p.id)] ?? {};
+      const from = byGw[fromGw];
+      const to = byGw[toGw];
 
-      const fromPts = isFiniteNumber(from?.points) ? from!.points : null;
-      const toPts = isFiniteNumber(to?.points) ? to!.points : null;
+      const fromOk = !!from?.found;
+      const toOk = !!to?.found;
 
-      const fromPrice = normalizePrice(from?.price);
-      const toPrice = normalizePrice(to?.price);
+      const fromPts = fromOk ? from.points : 0;
+      const toPts = toOk ? to.points : 0;
 
-      const ptsDelta =
-        isFiniteNumber(fromPts) && isFiniteNumber(toPts) ? toPts - fromPts : null;
+      const fromPrice = fromOk ? from.price : 0;
+      const toPrice = toOk ? to.price : 0;
 
-      const priceDelta =
-        isFiniteNumber(fromPrice) && isFiniteNumber(toPrice) ? toPrice - fromPrice : null;
-
-      const missingPts = !from?.found || !to?.found;
-      const missingPrice = !isFiniteNumber(from?.price) || !isFiniteNumber(to?.price);
-
-      let note = '';
-      if (missingPts && missingPrice) note = 'Missing points and price for one or both GWs';
-      else if (missingPts) note = 'Missing points for one or both GWs';
-      else if (missingPrice) note = 'Missing price for one or both GWs';
+      const missing = !fromOk || !toOk;
 
       return {
-        id: p.id,
+        id: String(p.id),
         name: p.name,
-        pos: p.element_type ?? '',
+        pos: (p.element_type ?? null) as ElementType | null,
         fromPts,
         toPts,
-        ptsDelta,
+        ptsDelta: toPts - fromPts,
         fromPrice,
         toPrice,
-        priceDelta,
-        note,
+        priceDelta: toPrice - fromPrice,
+        note: missing ? 'Missing points or price for one or both GWs' : '',
       };
     });
-  }, [players, stats]);
+  }, [disabled, players, stats, fromGw, toGw]);
 
   const totals = useMemo(() => {
-    const sum = (vals: Array<number | null>) =>
-      vals.reduce<number>((acc, v) => acc + (typeof v === 'number' && Number.isFinite(v) ? v : 0), 0);
+    const sum = (vals: number[]) => vals.reduce((acc, v) => acc + (Number.isFinite(v) ? v : 0), 0);
 
-    const fromPtsTotal = sum(rows.map((r) => r.fromPts));
-    const toPtsTotal = sum(rows.map((r) => r.toPts));
-    const ptsDeltaTotal = isFiniteNumber(toPtsTotal) && isFiniteNumber(fromPtsTotal) ? toPtsTotal - fromPtsTotal : 0;
-    const fromPriceTotal = sum(rows.map((r) => r.fromPrice));
-    const toPriceTotal = sum(rows.map((r) => r.toPrice));
-    const priceDeltaTotal = isFiniteNumber(toPriceTotal) && isFiniteNumber(fromPriceTotal) ? toPriceTotal - fromPriceTotal : 0;
-
-    return { fromPtsTotal, toPtsTotal, ptsDeltaTotal, fromPriceTotal, toPriceTotal, priceDeltaTotal };
+    return {
+      fromPts: sum(rows.map((r) => r.fromPts)),
+      toPts: sum(rows.map((r) => r.toPts)),
+      ptsDelta: sum(rows.map((r) => r.ptsDelta)),
+      fromPrice: sum(rows.map((r) => r.fromPrice)),
+      toPrice: sum(rows.map((r) => r.toPrice)),
+      priceDelta: sum(rows.map((r) => r.priceDelta)),
+    };
   }, [rows]);
 
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [betterLoading, setBetterLoading] = useState(false);
+  const [betterErr, setBetterErr] = useState<string | null>(null);
+  const [betterData, setBetterData] = useState<BetterOptionsResp | null>(null);
+
+  const openBetter = async (row: Row) => {
+    setOpenId(row.id);
+    setBetterLoading(true);
+    setBetterErr(null);
+    setBetterData(null);
+
+    try {
+      if (!row.pos) throw new Error('Player position missing');
+
+      const url =
+        `/api/fpl?op=better_options` +
+        `&playerId=${encodeURIComponent(row.id)}` +
+        `&from=${encodeURIComponent(String(fromGw))}` +
+        `&to=${encodeURIComponent(String(toGw))}`;
+
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(await res.text());
+      const data = (await res.json()) as BetterOptionsResp;
+
+      setBetterData(data);
+    } catch (e) {
+      setBetterErr(e instanceof Error ? e.message : 'Failed to load better options');
+    } finally {
+      setBetterLoading(false);
+    }
+  };
+
+  const closeBetter = () => {
+    setOpenId(null);
+    setBetterErr(null);
+    setBetterData(null);
+  };
+
+  // IMPORTANT: table only shows after Run produced stats
+  if (!rows.length) return null;
+
   return (
-    <div className={className ?? ''}>
-      <div className="w-[92vw] max-w-5xl rounded-2xl bg-white shadow-lg overflow-hidden">
-        {/* Controls */}
-        <div className="px-5 pt-4 pb-3 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-          <div className="flex items-end gap-3">
-            <div className="flex flex-col">
-              <label className="text-xs font-semibold text-slate-700">From GW</label>
-              <select
-                className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                value={fromGw}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setFromGw(v);
-                  if (v > toGw) setToGw(v);
-                }}
-                disabled={!canRun}
+    <div className="w-full overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table className="min-w-full text-left text-sm">
+        <thead className="bg-gray-50">
+          <tr className="text-gray-700">
+            <th className="px-4 py-3">Player</th>
+            <th className="px-4 py-3">Pos</th>
+            <th className="px-4 py-3">Pts up to GW {fromGw}</th>
+            <th className="px-4 py-3">Pts up to GW {toGw}</th>
+            <th className="px-4 py-3">Pts Δ</th>
+            <th className="px-4 py-3">Price @ {fromGw}</th>
+            <th className="px-4 py-3">Price @ {toGw}</th>
+            <th className="px-4 py-3">Price Δ</th>
+            <th className="px-4 py-3">Note</th>
+            <th className="px-4 py-3">Action</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="border-t">
+              <td className="px-4 py-3 font-medium">{r.name}</td>
+              <td className="px-4 py-3">{r.pos ?? ''}</td>
+              <td className="px-4 py-3">{r.fromPts}</td>
+              <td className="px-4 py-3">{r.toPts}</td>
+              <td
+                className={`px-4 py-3 ${
+                  r.ptsDelta > 0 ? 'text-emerald-700' : r.ptsDelta < 0 ? 'text-red-700' : ''
+                }`}
               >
-                {gwOptions.map((gw) => (
-                  <option key={gw} value={gw}>
-                    Gameweek {gw}
-                  </option>
-                ))}
-              </select>
+                {r.ptsDelta > 0 ? '+' : ''}
+                {r.ptsDelta}
+              </td>
+              <td className="px-4 py-3">{r.fromPrice ? r.fromPrice.toFixed(1) : ''}</td>
+              <td className="px-4 py-3">{r.toPrice ? r.toPrice.toFixed(1) : ''}</td>
+              <td
+                className={`px-4 py-3 ${
+                  r.priceDelta > 0 ? 'text-emerald-700' : r.priceDelta < 0 ? 'text-red-700' : ''
+                }`}
+              >
+                {r.priceDelta > 0 ? '+' : ''}
+                {r.priceDelta.toFixed(1)}
+              </td>
+              <td className="px-4 py-3 text-xs text-slate-500">{r.note}</td>
+              <td className="px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => openBetter(r)}
+                  className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+                >
+                  Better option
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+
+        <tfoot className="bg-gray-50">
+          <tr className="font-semibold">
+            <td className="px-4 py-3" colSpan={2}>
+              Totals
+            </td>
+            <td className="px-4 py-3">{totals.fromPts}</td>
+            <td className="px-4 py-3">{totals.toPts}</td>
+            <td className="px-4 py-3">
+              {totals.ptsDelta > 0 ? '+' : ''}
+              {totals.ptsDelta}
+            </td>
+            <td className="px-4 py-3">{totals.fromPrice ? totals.fromPrice.toFixed(1) : ''}</td>
+            <td className="px-4 py-3">{totals.toPrice ? totals.toPrice.toFixed(1) : ''}</td>
+            <td className="px-4 py-3">
+              {totals.priceDelta > 0 ? '+' : ''}
+              {totals.priceDelta.toFixed(1)}
+            </td>
+            <td className="px-4 py-3" colSpan={2} />
+          </tr>
+        </tfoot>
+      </table>
+
+      {openId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={closeBetter}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-xl"
+            onMouseDown={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold">Better option analysis</div>
+              <button className="rounded border px-3 py-1 text-sm" onClick={closeBetter}>
+                Close
+              </button>
             </div>
 
-            <div className="flex flex-col">
-              <label className="text-xs font-semibold text-slate-700">To GW</label>
-              <select
-                className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                value={toGw}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setToGw(v);
-                  if (v < fromGw) setFromGw(v);
-                }}
-                disabled={!canRun}
-              >
-                {gwOptions.map((gw) => (
-                  <option key={gw} value={gw}>
-                    Gameweek {gw}
-                  </option>
-                ))}
-              </select>
+            <div className="mt-3 text-sm text-slate-600">
+              Evaluated same position players within ±1.0m of the player’s price at GW {fromGw}.
             </div>
 
-            <button
-              type="button"
-              onClick={run}
-              disabled={!canRun || loading}
-              className={[
-                'ml-2 rounded-xl px-5 py-2 text-sm font-semibold',
-                !canRun || loading ? 'bg-slate-200 text-slate-500 cursor-not-allowed' : 'bg-slate-900 text-white hover:bg-slate-800',
-              ].join(' ')}
-            >
-              {loading ? 'Running' : 'Run'}
-            </button>
-          </div>
+            {betterLoading && <div className="mt-4 text-sm text-slate-600">Loading…</div>}
+            {betterErr && <div className="mt-4 text-sm text-red-600">{betterErr}</div>}
 
-          <div className="text-xs text-slate-500 md:text-right">
-            {lastFinishedGw != null ? `Last finished GW: ${lastFinishedGw}` : ''}
+            {betterData && (
+              <div className="mt-4 space-y-5">
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <div className="text-sm font-semibold text-slate-900">
+                    Price band used {betterData.priceBand.min.toFixed(1)}M to{' '}
+                    {betterData.priceBand.max.toFixed(1)}M
+                  </div>
+
+                  {betterData.currentIsBestByPoints ? (
+                    <div className="mt-2 text-sm text-emerald-700 font-semibold">
+                      Congrats it was a great pick!
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-slate-800 font-semibold">
+                      As you can see in the comparison and analysis, we recommend this player{' '}
+                      <span className="text-emerald-700">{betterData.recommended?.name ?? 'N/A'}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border p-4">
+                    <div className="text-sm font-semibold">Top price increase</div>
+                    <ul className="mt-3 space-y-2 text-sm">
+                      {betterData.topByPriceIncrease.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between">
+                          <span className="font-medium">{c.name}</span>
+                          <span className="text-slate-700">
+                            {c.priceDelta >= 0 ? '+' : ''}
+                            {c.priceDelta.toFixed(1)}M
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="rounded-xl border p-4">
+                    <div className="text-sm font-semibold">Top points earned</div>
+                    <ul className="mt-3 space-y-2 text-sm">
+                      {betterData.topByPointsGained.map((c) => (
+                        <li key={c.id} className="flex items-center justify-between">
+                          <span className="font-medium">{c.name}</span>
+                          <span className="text-slate-700">
+                            {c.pointsDelta >= 0 ? '+' : ''}
+                            {c.pointsDelta}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border p-4">
+                  <div className="text-sm font-semibold">Current vs recommended</div>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Player</th>
+                          <th className="px-3 py-2 text-left">Pts Δ</th>
+                          <th className="px-3 py-2 text-left">Price Δ</th>
+                          <th className="px-3 py-2 text-left">Price @ {fromGw}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[betterData.player, betterData.recommended].filter(Boolean).map((c) => (
+                          <tr key={c!.id} className="border-t">
+                            <td className="px-3 py-2 font-medium">{c!.name}</td>
+                            <td className="px-3 py-2">
+                              {c!.pointsDelta >= 0 ? '+' : ''}
+                              {c!.pointsDelta}
+                            </td>
+                            <td className="px-3 py-2">
+                              {c!.priceDelta >= 0 ? '+' : ''}
+                              {c!.priceDelta.toFixed(1)}M
+                            </td>
+                            <td className="px-3 py-2">{c!.priceFrom.toFixed(1)}M</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-
-        {err && (
-          <div className="px-5 pb-3 text-sm text-red-600">
-            Error: {err}
-          </div>
-        )}
-
-        {/* Table: only after Run */}
-        {hasRun && (
-          <div className="border-t border-slate-100">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-700">
-                <tr>
-                  <th className="px-5 py-3 text-left font-semibold">Player</th>
-                  <th className="px-3 py-3 text-left font-semibold">Pos</th>
-                  <th className="px-3 py-3 text-right font-semibold">GW {fromGw} Pts</th>
-                  <th className="px-3 py-3 text-right font-semibold">GW {toGw} Pts</th>
-                  <th className="px-3 py-3 text-right font-semibold">Pts Δ</th>
-                  <th className="px-3 py-3 text-right font-semibold">Price @ {fromGw}</th>
-                  <th className="px-3 py-3 text-right font-semibold">Price @ {toGw}</th>
-                  <th className="px-3 py-3 text-right font-semibold">Price Δ</th>
-                  <th className="px-3 py-3 text-left font-semibold">Note</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100">
-                    <td className="px-5 py-3 font-medium text-slate-900">{r.name}</td>
-                    <td className="px-3 py-3 text-slate-700">{r.pos}</td>
-                    <td className="px-3 py-3 text-right">{isFiniteNumber(r.fromPts) ? r.fromPts : '—'}</td>
-                    <td className="px-3 py-3 text-right">{isFiniteNumber(r.toPts) ? r.toPts : '—'}</td>
-                    <td className="px-3 py-3 text-right">
-                      {isFiniteNumber(r.ptsDelta) ? (r.ptsDelta >= 0 ? `+${r.ptsDelta}` : `${r.ptsDelta}`) : '—'}
-                    </td>
-                    <td className="px-3 py-3 text-right">{fmtPrice(r.fromPrice)}</td>
-                    <td className="px-3 py-3 text-right">{fmtPrice(r.toPrice)}</td>
-                    <td className="px-3 py-3 text-right">
-                      {isFiniteNumber(r.priceDelta)
-                        ? (r.priceDelta >= 0 ? `+${r.priceDelta.toFixed(1)}M` : `${r.priceDelta.toFixed(1)}M`)
-                        : '—'}
-                    </td>
-                    <td className="px-3 py-3 text-slate-500">{r.note}</td>
-                  </tr>
-                ))}
-
-                <tr className="border-t border-slate-200 bg-slate-50">
-                  <td className="px-5 py-3 font-semibold text-slate-900">Totals</td>
-                  <td className="px-3 py-3" />
-                  <td className="px-3 py-3 text-right font-semibold">{totals.fromPtsTotal}</td>
-                  <td className="px-3 py-3 text-right font-semibold">{totals.toPtsTotal}</td>
-                  <td className="px-3 py-3 text-right font-semibold">
-                    {totals.ptsDeltaTotal >= 0 ? `+${totals.ptsDeltaTotal}` : `${totals.ptsDeltaTotal}`}
-                  </td>
-                  <td className="px-3 py-3 text-right font-semibold">{fmtPrice(totals.fromPriceTotal)}</td>
-                  <td className="px-3 py-3 text-right font-semibold">{fmtPrice(totals.toPriceTotal)}</td>
-                  <td className="px-3 py-3 text-right font-semibold">
-                    {totals.priceDeltaTotal >= 0 ? `+${totals.priceDeltaTotal.toFixed(1)}M` : `${totals.priceDeltaTotal.toFixed(1)}M`}
-                  </td>
-                  <td className="px-3 py-3" />
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
