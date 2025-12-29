@@ -7,6 +7,7 @@ type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
 
 type UiPlayer = {
   id: string;
+  code?: number | null;
   name: string;
   element_type?: ElementType | null;
   price?: number | null;
@@ -93,6 +94,12 @@ function fmtM(n: number): string {
   return `${n.toFixed(1)}M`;
 }
 
+function playerPhotoUrl(p: UiPlayer): string | null {
+  const code = typeof p.code === 'number' ? p.code : null;
+  if (!code) return null;
+  return `https://resources.premierleague.com/premierleague/photos/players/110x140/p${code}.png`;
+}
+
 export default function TeamGrid({ players, loading, error, teamGw, prefill, teamValue }: Props) {
   const [formation, setFormation] = useState<[number, number, number]>([4, 4, 2]);
 
@@ -105,7 +112,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
   const [searchQ, setSearchQ] = useState<string>('');
   const [sortKey, setSortKey] = useState<'points_desc' | 'price_desc' | 'price_asc'>('points_desc');
 
-  // Simulation controls
   const [simFromGw, setSimFromGw] = useState<number>(teamGw);
   const [simToGw, setSimToGw] = useState<number>(teamGw);
   const [statsIndex, setStatsIndex] = useState<StatsIndex | null>(null);
@@ -299,7 +305,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
     setModalPosition(null);
     setModalIndex(null);
 
-    // Changing picks invalidates previous run
     setStatsIndex(null);
     setStatsError(null);
     setHasRun(false);
@@ -311,7 +316,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
 
   const hasFullSquad = pickedPlayers.length === 15;
 
-  // If imported, don't block by 100M (prices move). If manual, enforce budget.
   const isImported = !!prefill && prefill.length === 15;
   const canRun = hasFullSquad && (isImported ? true : !isOverBudget);
 
@@ -410,6 +414,8 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
             <div className="flex justify-center gap-8 flex-wrap">
               {Array.from({ length: count }).map((_, idx) => {
                 const picked = selected[pos]?.[idx] ?? null;
+                const url = picked ? playerPhotoUrl(picked) : null;
+
                 return (
                   <div
                     key={idx}
@@ -419,6 +425,18 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                   >
                     {picked ? (
                       <div className="flex flex-col items-center gap-1">
+                        {url ? (
+                          <img
+                            src={url}
+                            alt={picked.name}
+                            className="h-14 w-14 rounded-full object-cover border border-white/60 shadow"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        ) : null}
                         <span className="font-semibold leading-tight line-clamp-2">{picked.name}</span>
                         <span className="text-xs text-slate-300">{picked.team}</span>
                       </div>
@@ -516,23 +534,42 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                       const priceVal = toNum(p.price);
                       const priceDisplay = priceVal ? `${priceVal.toFixed(1)}M` : '';
                       const pts = typeof p.points === 'number' ? p.points : 0;
+                      const url = playerPhotoUrl(p);
+
                       return (
                         <li
                           key={p.id}
-                          className="p-3 rounded hover:bg-blue-100 cursor-pointer transition flex flex-col"
+                          className="p-3 rounded hover:bg-blue-100 cursor-pointer transition flex items-center gap-3"
                           onClick={() => choosePlayer(p)}
                         >
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium">
-                              {p.name}
-                              {p.element_type ? ` (${p.element_type})` : ''}
-                            </span>
-                            <div className="flex items-center gap-3">
-                              <span className="text-sm font-semibold text-slate-700">{pts} pts</span>
-                              <span className="text-sm font-semibold text-slate-700">{priceDisplay}</span>
+                          {url ? (
+                            <img
+                              src={url}
+                              alt={p.name}
+                              className="h-10 w-10 rounded-full object-cover border border-slate-200"
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div className="h-10 w-10 rounded-full bg-slate-200" />
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="font-medium truncate">
+                                {p.name}
+                                {p.element_type ? ` (${p.element_type})` : ''}
+                              </span>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <span className="text-sm font-semibold text-slate-700">{pts} pts</span>
+                                <span className="text-sm font-semibold text-slate-700">{priceDisplay}</span>
+                              </div>
                             </div>
+                            {p.team && <div className="mt-1 text-base font-bold text-slate-800">{p.team}</div>}
                           </div>
-                          {p.team && <div className="mt-1 text-base font-bold text-slate-800">{p.team}</div>}
                         </li>
                       );
                     })}
@@ -543,7 +580,6 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
           </div>
         )}
 
-        {/* RUN CONTROLS (restored) */}
         <div className="mt-2 flex flex-col gap-3 items-center">
           <div className="flex flex-col md:flex-row items-center gap-3">
             <div className="flex flex-col">
@@ -609,12 +645,15 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
 
           {!canRun && (
             <div className="text-center text-sm text-white/90">
-              {hasFullSquad ? (isImported ? '' : 'Over budget. Adjust picks or import a team.') : 'Select all 15 players to enable simulation.'}
+              {hasFullSquad
+                ? isImported
+                  ? ''
+                  : 'Over budget. Adjust picks or import a team.'
+                : 'Select all 15 players to enable simulation.'}
             </div>
           )}
         </div>
 
-        {/* TABLE (only after Run) */}
         <div className="flex justify-center">
           <SimulatePanel
             players={pickedPlayers.map((p) => ({

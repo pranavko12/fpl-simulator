@@ -10,6 +10,7 @@ type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
 
 type UiPlayer = {
   id: string;
+  code?: number | null;
   name: string;
   element_type?: ElementType | null;
   price?: number | null;
@@ -31,6 +32,7 @@ type PrefillPlayer = {
 type ApiPlayersResp = {
   players: Array<{
     id: string;
+    code: number | null;
     name: string;
     element_type: ElementType | null;
     price: number | null;
@@ -71,6 +73,7 @@ export default function SimulatorPage() {
       const ui = (data.players ?? [])
         .map((p) => ({
           id: String(p.id),
+          code: typeof p.code === 'number' ? p.code : null,
           name: String(p.name ?? '').trim(),
           element_type: p.element_type ?? null,
           price: typeof p.price === 'number' ? p.price : null,
@@ -93,7 +96,6 @@ export default function SimulatorPage() {
     loadPlayers();
   }, []);
 
-  // If user changes GW, previously imported team is no longer valid
   useEffect(() => {
     setPrefill(null);
     setTeamValue(null);

@@ -17,6 +17,7 @@ type BootstrapEvent = {
 type BootstrapTeam = { id: number; name: string; short_name: string };
 type BootstrapElement = {
   id: number;
+  code: number;
   web_name: string;
   element_type: number;
   team: number;
@@ -35,7 +36,7 @@ type EntryResponse = { name?: string; player_first_name?: string; player_last_na
 type PicksResponse = {
   picks: Array<{
     element: number;
-    position: number; // 1..15
+    position: number;
     is_captain: boolean;
     is_vice_captain: boolean;
   }>;
@@ -43,8 +44,8 @@ type PicksResponse = {
 
 type ElementHistoryRow = {
   round: number;
-  total_points: number; // GW points
-  value?: number; // price * 10 at that GW (often present)
+  total_points: number;
+  value?: number;
 };
 
 type ElementSummary = {
@@ -65,6 +66,7 @@ type PrefillPlayer = {
 type ApiPlayersResp = {
   players: Array<{
     id: string;
+    code: number | null;
     name: string;
     element_type: ElementType | null;
     price: number | null;
@@ -171,7 +173,6 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
-// price at GW (or most recent <= GW) from element-summary history.value
 function priceAtOrBefore(hist: ElementHistoryRow[], gw: number): { price: number; found: boolean } {
   let bestRound = -1;
   let bestValue: number | null = null;
@@ -189,7 +190,6 @@ function priceAtOrBefore(hist: ElementHistoryRow[], gw: number): { price: number
   return { price: bestValue / 10, found: true };
 }
 
-// cumulative points from GW1..GW (sum of per-GW points in history.total_points)
 function cumulativePointsUpTo(hist: ElementHistoryRow[], gw: number): { points: number; found: boolean } {
   let sum = 0;
   let any = false;
@@ -218,7 +218,6 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   const op = q.get('op');
 
-  // ---------- players ----------
   if (op === 'players') {
     const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
 
@@ -227,6 +226,7 @@ export async function GET(req: NextRequest) {
 
     const players = (boot.elements ?? []).map((e) => ({
       id: String(e.id),
+      code: Number.isFinite(e.code) ? e.code : null,
       name: e.web_name,
       element_type: normalizeElementType(e.element_type),
       price: Number.isFinite(e.now_cost) ? e.now_cost / 10 : null,
@@ -238,7 +238,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(resp);
   }
 
-  // ---------- entry_team ----------
   if (op === 'entry_team') {
     const entryIdRaw = q.get('entryId') ?? '';
     const gwRaw = q.get('gw') ?? '';
@@ -309,7 +308,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(resp);
   }
 
-  // ---------- stats (cumulative points + price at GW) ----------
   if (op === 'stats') {
     const idsRaw = q.get('ids') ?? '';
     const fromRaw = q.get('from') ?? '';
@@ -393,9 +391,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(resp);
   }
 
-  // ---------- better_options ----------
-  // Compares same-position players within ±1.0m of the base player's price at FROM GW,
-  // using ONLY the selected GW window (from..to).
   if (op === 'better_options') {
     const playerIdRaw = (q.get('playerId') ?? '').trim();
     const fromN = parseGwParam(q.get('from'));
@@ -436,7 +431,6 @@ export async function GET(req: NextRequest) {
     if (!basePosMaybe) return NextResponse.json({ error: 'Unsupported player position' }, { status: 400 });
     const basePos: ElementType = basePosMaybe;
 
-    // Base history at from/to
     const baseSummary = await fetchJson<ElementSummary>(
       `https://fantasy.premierleague.com/api/element-summary/${baseEl.id}/`
     );
@@ -447,8 +441,6 @@ export async function GET(req: NextRequest) {
     const baseFromPrice = priceAtOrBefore(baseHist, from);
     const baseToPrice = priceAtOrBefore(baseHist, to);
 
-    // You asked that the price band be based on the player's price at FROM GW.
-    // If FPL doesn't provide a historical price value for that GW, we hard-fail (prevents wrong banding).
     if (!baseFromPrice.found) {
       return NextResponse.json(
         { error: 'Base player missing historical price at FROM GW (cannot apply ±1.0m band).' },
@@ -472,7 +464,6 @@ export async function GET(req: NextRequest) {
     const minPrice = Math.max(0, baseCandidate.priceFrom - 1.0);
     const maxPrice = baseCandidate.priceFrom + 1.0;
 
-    // Same-position pool (bootstrap list), then filter by historical price at FROM GW.
     const posElements = (boot.elements ?? []).filter((e) => normalizeElementType(e.element_type) === basePos);
 
     const candidates = await mapLimit(posElements, 10, async (el): Promise<BetterCandidate | null> => {
@@ -515,7 +506,6 @@ export async function GET(req: NextRequest) {
     for (const c of candidates) {
       if (c) uniq.set(c.id, c);
     }
-    // Ensure base player is included
     uniq.set(baseCandidate.id, baseCandidate);
 
     const list = Array.from(uniq.values());
