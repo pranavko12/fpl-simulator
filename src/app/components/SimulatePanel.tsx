@@ -35,6 +35,28 @@ type BetterOptionsResp = {
   currentIsBestByPoints: boolean;
 };
 
+type ForecastCandidate = {
+  id: string;
+  name: string;
+  team: string;
+  pos: ElementType;
+  price: number;
+  epNextGw: number;
+  epNext5: number;
+};
+
+type ForecastOptionsResp = {
+  nextGw: number;
+  player: ForecastCandidate;
+  priceBand: { min: number; max: number };
+  topNextGw: ForecastCandidate[];
+  topNext5: ForecastCandidate[];
+  recommendedNextGw: ForecastCandidate | null;
+  recommendedNext5: ForecastCandidate | null;
+  currentIsBestNextGw: boolean;
+  currentIsBestNext5: boolean;
+};
+
 export default function SimulatePanel({
   players,
   fromGw,
@@ -110,44 +132,79 @@ export default function SimulatePanel({
   }, [rows]);
 
   const [openId, setOpenId] = useState<string | null>(null);
-  const [betterLoading, setBetterLoading] = useState(false);
-  const [betterErr, setBetterErr] = useState<string | null>(null);
-  const [betterData, setBetterData] = useState<BetterOptionsResp | null>(null);
+  const [tab, setTab] = useState<'range' | 'recent' | 'long'>('range');
+
+  const [rangeLoading, setRangeLoading] = useState(false);
+  const [rangeErr, setRangeErr] = useState<string | null>(null);
+  const [rangeData, setRangeData] = useState<BetterOptionsResp | null>(null);
+
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastErr, setForecastErr] = useState<string | null>(null);
+  const [forecastData, setForecastData] = useState<ForecastOptionsResp | null>(null);
 
   const openBetter = async (row: Row) => {
     setOpenId(row.id);
-    setBetterLoading(true);
-    setBetterErr(null);
-    setBetterData(null);
+    setTab('range');
+
+    setRangeLoading(true);
+    setRangeErr(null);
+    setRangeData(null);
+
+    setForecastLoading(true);
+    setForecastErr(null);
+    setForecastData(null);
 
     try {
       if (!row.pos) throw new Error('Player position missing');
 
-      const url =
+      const urlRange =
         `/api/fpl?op=better_options` +
         `&playerId=${encodeURIComponent(row.id)}` +
         `&from=${encodeURIComponent(String(fromGw))}` +
         `&to=${encodeURIComponent(String(toGw))}`;
 
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(await res.text());
-      const data = (await res.json()) as BetterOptionsResp;
+      const urlForecast = `/api/fpl?op=forecast_options&playerId=${encodeURIComponent(row.id)}`;
 
-      setBetterData(data);
+      const [resRange, resForecast] = await Promise.all([
+        fetch(urlRange, { cache: 'no-store' }),
+        fetch(urlForecast, { cache: 'no-store' }),
+      ]);
+
+      if (!resRange.ok) throw new Error(await resRange.text());
+      const dataRange = (await resRange.json()) as BetterOptionsResp;
+      setRangeData(dataRange);
+      setRangeLoading(false);
+
+      if (!resForecast.ok) throw new Error(await resForecast.text());
+      const dataForecast = (await resForecast.json()) as ForecastOptionsResp;
+      setForecastData(dataForecast);
+      setForecastLoading(false);
     } catch (e) {
-      setBetterErr(e instanceof Error ? e.message : 'Failed to load better options');
-    } finally {
-      setBetterLoading(false);
+      const msg = e instanceof Error ? e.message : 'Failed to load analysis';
+      if (rangeLoading) {
+        setRangeErr(msg);
+        setRangeData(null);
+        setRangeLoading(false);
+      }
+      if (forecastLoading) {
+        setForecastErr(msg);
+        setForecastData(null);
+        setForecastLoading(false);
+      }
     }
   };
 
   const closeBetter = () => {
     setOpenId(null);
-    setBetterErr(null);
-    setBetterData(null);
+    setTab('range');
+    setRangeErr(null);
+    setRangeData(null);
+    setRangeLoading(false);
+    setForecastErr(null);
+    setForecastData(null);
+    setForecastLoading(false);
   };
 
-  // IMPORTANT: table only shows after Run produced stats
   if (!rows.length) return null;
 
   return (
@@ -175,21 +232,13 @@ export default function SimulatePanel({
               <td className="px-4 py-3">{r.pos ?? ''}</td>
               <td className="px-4 py-3">{r.fromPts}</td>
               <td className="px-4 py-3">{r.toPts}</td>
-              <td
-                className={`px-4 py-3 ${
-                  r.ptsDelta > 0 ? 'text-emerald-700' : r.ptsDelta < 0 ? 'text-red-700' : ''
-                }`}
-              >
+              <td className={`px-4 py-3 ${r.ptsDelta > 0 ? 'text-emerald-700' : r.ptsDelta < 0 ? 'text-red-700' : ''}`}>
                 {r.ptsDelta > 0 ? '+' : ''}
                 {r.ptsDelta}
               </td>
               <td className="px-4 py-3">{r.fromPrice ? r.fromPrice.toFixed(1) : ''}</td>
               <td className="px-4 py-3">{r.toPrice ? r.toPrice.toFixed(1) : ''}</td>
-              <td
-                className={`px-4 py-3 ${
-                  r.priceDelta > 0 ? 'text-emerald-700' : r.priceDelta < 0 ? 'text-red-700' : ''
-                }`}
-              >
+              <td className={`px-4 py-3 ${r.priceDelta > 0 ? 'text-emerald-700' : r.priceDelta < 0 ? 'text-red-700' : ''}`}>
                 {r.priceDelta > 0 ? '+' : ''}
                 {r.priceDelta.toFixed(1)}
               </td>
@@ -230,10 +279,7 @@ export default function SimulatePanel({
       </table>
 
       {openId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onMouseDown={closeBetter}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={closeBetter}>
           <div
             className="w-full max-w-3xl rounded-2xl bg-white p-5 shadow-xl"
             onMouseDown={(e) => e.stopPropagation()}
@@ -247,97 +293,232 @@ export default function SimulatePanel({
               </button>
             </div>
 
-            <div className="mt-3 text-sm text-slate-600">
-              Evaluated same position players within ±1.0m of the player’s price at GW {fromGw}.
+            <div className="mt-3 flex gap-2">
+              <button
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                  tab === 'range' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                }`}
+                onClick={() => setTab('range')}
+              >
+                Better option in range
+              </button>
+              <button
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                  tab === 'recent' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                }`}
+                onClick={() => setTab('recent')}
+              >
+                Recent
+              </button>
+              <button
+                className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                  tab === 'long' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-900 hover:bg-slate-200'
+                }`}
+                onClick={() => setTab('long')}
+              >
+                Long term
+              </button>
             </div>
 
-            {betterLoading && <div className="mt-4 text-sm text-slate-600">Loading…</div>}
-            {betterErr && <div className="mt-4 text-sm text-red-600">{betterErr}</div>}
+            {tab === 'range' && (
+              <>
+                <div className="mt-3 text-sm text-slate-600">
+                  Evaluated same position players within ±1.0m of the player’s price at GW {fromGw}.
+                </div>
 
-            {betterData && (
-              <div className="mt-4 space-y-5">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-sm font-semibold text-slate-900">
-                    Price band used {betterData.priceBand.min.toFixed(1)}M to{' '}
-                    {betterData.priceBand.max.toFixed(1)}M
-                  </div>
+                {rangeLoading && <div className="mt-4 text-sm text-slate-600">Loading…</div>}
+                {rangeErr && <div className="mt-4 text-sm text-red-600">{rangeErr}</div>}
 
-                  {betterData.currentIsBestByPoints ? (
-                    <div className="mt-2 text-sm text-emerald-700 font-semibold">
-                      Congrats it was a great pick!
+                {rangeData && (
+                  <div className="mt-4 space-y-5">
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <div className="text-sm font-semibold text-slate-900">
+                        Price band used {rangeData.priceBand.min.toFixed(1)}M to {rangeData.priceBand.max.toFixed(1)}M
+                      </div>
+
+                      {rangeData.currentIsBestByPoints ? (
+                        <div className="mt-2 text-sm text-emerald-700 font-semibold">Congrats it was a great pick!</div>
+                      ) : (
+                        <div className="mt-2 text-sm text-slate-800 font-semibold">
+                          We recommend <span className="text-emerald-700">{rangeData.recommended?.name ?? 'N/A'}</span>
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="mt-2 text-sm text-slate-800 font-semibold">
-                      As you can see in the comparison and analysis, we recommend this player{' '}
-                      <span className="text-emerald-700">{betterData.recommended?.name ?? 'N/A'}</span>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="rounded-xl border p-4">
+                        <div className="text-sm font-semibold">Top price increase</div>
+                        <ul className="mt-3 space-y-2 text-sm">
+                          {rangeData.topByPriceIncrease.map((c) => (
+                            <li key={c.id} className="flex items-center justify-between">
+                              <span className="font-medium">{c.name}</span>
+                              <span className="text-slate-700">
+                                {c.priceDelta >= 0 ? '+' : ''}
+                                {c.priceDelta.toFixed(1)}M
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="rounded-xl border p-4">
+                        <div className="text-sm font-semibold">Top points earned</div>
+                        <ul className="mt-3 space-y-2 text-sm">
+                          {rangeData.topByPointsGained.map((c) => (
+                            <li key={c.id} className="flex items-center justify-between">
+                              <span className="font-medium">{c.name}</span>
+                              <span className="text-slate-700">
+                                {c.pointsDelta >= 0 ? '+' : ''}
+                                {c.pointsDelta}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     </div>
-                  )}
-                </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-xl border p-4">
-                    <div className="text-sm font-semibold">Top price increase</div>
-                    <ul className="mt-3 space-y-2 text-sm">
-                      {betterData.topByPriceIncrease.map((c) => (
-                        <li key={c.id} className="flex items-center justify-between">
-                          <span className="font-medium">{c.name}</span>
-                          <span className="text-slate-700">
-                            {c.priceDelta >= 0 ? '+' : ''}
-                            {c.priceDelta.toFixed(1)}M
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className="rounded-xl border p-4">
+                      <div className="text-sm font-semibold">Current vs recommended</div>
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Player</th>
+                              <th className="px-3 py-2 text-left">Pts Δ</th>
+                              <th className="px-3 py-2 text-left">Price Δ</th>
+                              <th className="px-3 py-2 text-left">Price @ {fromGw}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {[rangeData.player, rangeData.recommended].filter(Boolean).map((c) => (
+                              <tr key={c!.id} className="border-t">
+                                <td className="px-3 py-2 font-medium">{c!.name}</td>
+                                <td className="px-3 py-2">
+                                  {c!.pointsDelta >= 0 ? '+' : ''}
+                                  {c!.pointsDelta}
+                                </td>
+                                <td className="px-3 py-2">
+                                  {c!.priceDelta >= 0 ? '+' : ''}
+                                  {c!.priceDelta.toFixed(1)}M
+                                </td>
+                                <td className="px-3 py-2">{c!.priceFrom.toFixed(1)}M</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
+                )}
+              </>
+            )}
 
-                  <div className="rounded-xl border p-4">
-                    <div className="text-sm font-semibold">Top points earned</div>
-                    <ul className="mt-3 space-y-2 text-sm">
-                      {betterData.topByPointsGained.map((c) => (
-                        <li key={c.id} className="flex items-center justify-between">
-                          <span className="font-medium">{c.name}</span>
-                          <span className="text-slate-700">
-                            {c.pointsDelta >= 0 ? '+' : ''}
-                            {c.pointsDelta}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+            {tab === 'recent' && (
+              <>
+                <div className="mt-3 text-sm text-slate-600">Predicted expected points for next GW.</div>
 
-                <div className="rounded-xl border p-4">
-                  <div className="text-sm font-semibold">Current vs recommended</div>
-                  <div className="mt-3 overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-3 py-2 text-left">Player</th>
-                          <th className="px-3 py-2 text-left">Pts Δ</th>
-                          <th className="px-3 py-2 text-left">Price Δ</th>
-                          <th className="px-3 py-2 text-left">Price @ {fromGw}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[betterData.player, betterData.recommended].filter(Boolean).map((c) => (
-                          <tr key={c!.id} className="border-t">
-                            <td className="px-3 py-2 font-medium">{c!.name}</td>
-                            <td className="px-3 py-2">
-                              {c!.pointsDelta >= 0 ? '+' : ''}
-                              {c!.pointsDelta}
-                            </td>
-                            <td className="px-3 py-2">
-                              {c!.priceDelta >= 0 ? '+' : ''}
-                              {c!.priceDelta.toFixed(1)}M
-                            </td>
-                            <td className="px-3 py-2">{c!.priceFrom.toFixed(1)}M</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                {forecastLoading && <div className="mt-4 text-sm text-slate-600">Loading…</div>}
+                {forecastErr && <div className="mt-4 text-sm text-red-600">{forecastErr}</div>}
+
+                {forecastData && (
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <div className="text-sm font-semibold text-slate-900">
+                        Next GW {forecastData.nextGw} price band {forecastData.priceBand.min.toFixed(1)}M to{' '}
+                        {forecastData.priceBand.max.toFixed(1)}M
+                      </div>
+
+                      {forecastData.currentIsBestNextGw ? (
+                        <div className="mt-2 text-sm text-emerald-700 font-semibold">Current pick is best for next GW.</div>
+                      ) : (
+                        <div className="mt-2 text-sm text-slate-800 font-semibold">
+                          Recommended <span className="text-emerald-700">{forecastData.recommendedNextGw?.name ?? 'N/A'}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border p-4">
+                      <div className="text-sm font-semibold">Top options next GW</div>
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Player</th>
+                              <th className="px-3 py-2 text-left">Team</th>
+                              <th className="px-3 py-2 text-left">Price</th>
+                              <th className="px-3 py-2 text-left">xPts</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {forecastData.topNextGw.map((c) => (
+                              <tr key={c.id} className="border-t">
+                                <td className="px-3 py-2 font-medium">{c.name}</td>
+                                <td className="px-3 py-2">{c.team}</td>
+                                <td className="px-3 py-2">{c.price.toFixed(1)}M</td>
+                                <td className="px-3 py-2">{c.epNextGw.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )}
+              </>
+            )}
+
+            {tab === 'long' && (
+              <>
+                <div className="mt-3 text-sm text-slate-600">Predicted expected points over next 5 GWs.</div>
+
+                {forecastLoading && <div className="mt-4 text-sm text-slate-600">Loading…</div>}
+                {forecastErr && <div className="mt-4 text-sm text-red-600">{forecastErr}</div>}
+
+                {forecastData && (
+                  <div className="mt-4 space-y-4">
+                    <div className="rounded-xl bg-slate-50 p-4">
+                      <div className="text-sm font-semibold text-slate-900">
+                        Next 5 from GW {forecastData.nextGw} price band {forecastData.priceBand.min.toFixed(1)}M to{' '}
+                        {forecastData.priceBand.max.toFixed(1)}M
+                      </div>
+
+                      {forecastData.currentIsBestNext5 ? (
+                        <div className="mt-2 text-sm text-emerald-700 font-semibold">Current pick is best for next 5.</div>
+                      ) : (
+                        <div className="mt-2 text-sm text-slate-800 font-semibold">
+                          Recommended <span className="text-emerald-700">{forecastData.recommendedNext5?.name ?? 'N/A'}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="rounded-xl border p-4">
+                      <div className="text-sm font-semibold">Top options next 5</div>
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="px-3 py-2 text-left">Player</th>
+                              <th className="px-3 py-2 text-left">Team</th>
+                              <th className="px-3 py-2 text-left">Price</th>
+                              <th className="px-3 py-2 text-left">xPts</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {forecastData.topNext5.map((c) => (
+                              <tr key={c.id} className="border-t">
+                                <td className="px-3 py-2 font-medium">{c.name}</td>
+                                <td className="px-3 py-2">{c.team}</td>
+                                <td className="px-3 py-2">{c.price.toFixed(1)}M</td>
+                                <td className="px-3 py-2">{c.epNext5.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>

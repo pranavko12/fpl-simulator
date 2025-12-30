@@ -1,4 +1,3 @@
-// src/app/api/fpl/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -15,6 +14,7 @@ type BootstrapEvent = {
 };
 
 type BootstrapTeam = { id: number; name: string; short_name: string };
+
 type BootstrapElement = {
   id: number;
   code: number;
@@ -23,12 +23,23 @@ type BootstrapElement = {
   team: number;
   now_cost: number;
   total_points: number;
+  minutes: number;
 };
 
 type BootstrapStatic = {
   events: BootstrapEvent[];
   teams: BootstrapTeam[];
   elements: BootstrapElement[];
+};
+
+type Fixture = {
+  id: number;
+  event: number | null;
+  team_h: number;
+  team_a: number;
+  team_h_difficulty: number;
+  team_a_difficulty: number;
+  kickoff_time: string | null;
 };
 
 type EntryResponse = { name?: string; player_first_name?: string; player_last_name?: string };
@@ -45,6 +56,7 @@ type PicksResponse = {
 type ElementHistoryRow = {
   round: number;
   total_points: number;
+  minutes: number;
   value?: number;
 };
 
@@ -119,6 +131,28 @@ type BetterOptionsResp = {
   currentIsBestByPoints: boolean;
 };
 
+type ForecastCandidate = {
+  id: string;
+  name: string;
+  team: string;
+  pos: ElementType;
+  price: number;
+  epNextGw: number;
+  epNext5: number;
+};
+
+type ForecastOptionsResp = {
+  nextGw: number;
+  player: ForecastCandidate;
+  priceBand: { min: number; max: number };
+  topNextGw: ForecastCandidate[];
+  topNext5: ForecastCandidate[];
+  recommendedNextGw: ForecastCandidate | null;
+  recommendedNext5: ForecastCandidate | null;
+  currentIsBestNextGw: boolean;
+  currentIsBestNext5: boolean;
+};
+
 function normalizeElementType(n: number): ElementType | null {
   if (n === 1) return 'GK';
   if (n === 2) return 'DEF';
@@ -133,6 +167,13 @@ function lastFinishedGw(events: BootstrapEvent[]): number {
     if (e.finished && Number.isFinite(e.id)) last = Math.max(last, e.id);
   }
   return last;
+}
+
+function nextGwFromEvents(events: BootstrapEvent[]): number {
+  const nx = (events ?? []).find((e) => e.is_next && Number.isFinite(e.id));
+  if (nx && Number.isFinite(nx.id)) return nx.id;
+  const last = lastFinishedGw(events ?? []);
+  return Math.min(38, Math.max(1, last + 1));
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -212,6 +253,49 @@ function validateGwRange(from: number, to: number): string | null {
   if (from < 1 || to < 1 || from > 38 || to > 38) return 'GW out of range';
   if (from > to) return 'from must be <= to';
   return null;
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function fixtureMultiplier(difficulty: number): number {
+  const d = Number(difficulty);
+  const mult = 1.25 - 0.08 * (d - 3);
+  return clamp(mult, 0.9, 1.5);
+}
+
+function fixturesForTeamInGw(fixtures: Fixture[], teamId: number, gw: number): number[] {
+  const diffs: number[] = [];
+  for (const f of fixtures) {
+    if (f.event !== gw) continue;
+    if (f.team_h === teamId) diffs.push(Number(f.team_h_difficulty) || 3);
+    else if (f.team_a === teamId) diffs.push(Number(f.team_a_difficulty) || 3);
+  }
+  return diffs;
+}
+
+function lastNGwRowsBefore(hist: ElementHistoryRow[], beforeGw: number, n: number): ElementHistoryRow[] {
+  const rows = (hist ?? [])
+    .filter((r) => Number.isFinite(r.round) && r.round < beforeGw)
+    .sort((a, b) => b.round - a.round)
+    .slice(0, n);
+  return rows;
+}
+
+function pp90FromRecentOrSeason(recent: ElementHistoryRow[], seasonPoints: number, seasonMinutes: number): number {
+  const mins = recent.reduce((s, r) => s + (Number(r.minutes) || 0), 0);
+  const pts = recent.reduce((s, r) => s + (Number(r.total_points) || 0), 0);
+  if (mins >= 180) return (pts / mins) * 90;
+  if (seasonMinutes > 0) return (seasonPoints / seasonMinutes) * 90;
+  return 0;
+}
+
+function expMinutesFromRecent(recent: ElementHistoryRow[], fallback: number): number {
+  if (!recent.length) return clamp(fallback, 0, 90);
+  const mins = recent.reduce((s, r) => s + (Number(r.minutes) || 0), 0);
+  const avg = mins / recent.length;
+  return clamp(avg, 0, 90);
 }
 
 export async function GET(req: NextRequest) {
@@ -530,6 +614,159 @@ export async function GET(req: NextRequest) {
       topByPointsGained,
       recommended,
       currentIsBestByPoints,
+    };
+
+    return NextResponse.json(out);
+  }
+
+  if (op === 'forecast_options') {
+    const playerIdRaw = (q.get('playerId') ?? '').trim();
+    if (!/^\d+$/.test(playerIdRaw)) {
+      return NextResponse.json({ error: 'playerId required' }, { status: 400 });
+    }
+
+    const boot = await fetchJson<BootstrapStatic>('https://fantasy.premierleague.com/api/bootstrap-static/');
+    const fixtures = await fetchJson<Fixture[]>('https://fantasy.premierleague.com/api/fixtures/');
+
+    const nextGw = nextGwFromEvents(boot.events ?? []);
+    if (nextGw < 1 || nextGw > 38) return NextResponse.json({ error: 'nextGw invalid' }, { status: 500 });
+
+    const teamName = new Map<number, string>();
+    for (const t of boot.teams ?? []) teamName.set(t.id, t.name);
+
+    const elementById = new Map<number, BootstrapElement>();
+    for (const e of boot.elements ?? []) elementById.set(e.id, e);
+
+    const baseEl = elementById.get(Number(playerIdRaw));
+    if (!baseEl) return NextResponse.json({ error: 'Unknown playerId' }, { status: 400 });
+
+    const basePosMaybe = normalizeElementType(baseEl.element_type);
+    if (!basePosMaybe) return NextResponse.json({ error: 'Unsupported player position' }, { status: 400 });
+    const basePos: ElementType = basePosMaybe;
+
+    const basePrice = Number.isFinite(baseEl.now_cost) ? baseEl.now_cost / 10 : 0;
+    const minPrice = Math.max(0, basePrice - 1.0);
+    const maxPrice = basePrice + 1.0;
+
+    const posElements = (boot.elements ?? []).filter((e) => normalizeElementType(e.element_type) === basePos);
+
+    const summaries = await mapLimit(posElements, 10, async (el) => {
+      try {
+        const s = await fetchJson<ElementSummary>(
+          `https://fantasy.premierleague.com/api/element-summary/${el.id}/`
+        );
+        return { el, ok: true as const, summary: s };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'element-summary failed';
+        return { el, ok: false as const, reason: msg };
+      }
+    });
+
+    const computed: ForecastCandidate[] = [];
+
+    for (const r of summaries) {
+      if (!r.ok) continue;
+
+      const el = r.el;
+      const price = Number.isFinite(el.now_cost) ? el.now_cost / 10 : 0;
+      if (price < minPrice || price > maxPrice) continue;
+
+      const hist = Array.isArray(r.summary.history) ? r.summary.history : [];
+      const recent = lastNGwRowsBefore(hist, nextGw, 5);
+
+      const pp90 = pp90FromRecentOrSeason(recent, Number(el.total_points) || 0, Number(el.minutes) || 0);
+      const expMin = expMinutesFromRecent(recent, 80);
+
+      let epNext = 0;
+      const diffsNext = fixturesForTeamInGw(fixtures, el.team, nextGw);
+      for (const d of diffsNext) {
+        epNext += pp90 * (expMin / 90) * fixtureMultiplier(d);
+      }
+
+      let ep5 = 0;
+      for (let gw = nextGw; gw <= Math.min(38, nextGw + 4); gw++) {
+        const diffs = fixturesForTeamInGw(fixtures, el.team, gw);
+        for (const d of diffs) {
+          ep5 += pp90 * (expMin / 90) * fixtureMultiplier(d);
+        }
+      }
+
+      computed.push({
+        id: String(el.id),
+        name: el.web_name,
+        team: teamName.get(el.team) ?? '',
+        pos: basePos,
+        price,
+        epNextGw: Number.isFinite(epNext) ? epNext : 0,
+        epNext5: Number.isFinite(ep5) ? ep5 : 0,
+      });
+    }
+
+    const baseCandidate = computed.find((c) => c.id === String(baseEl.id));
+    if (!baseCandidate) {
+      const baseSummary = await fetchJson<ElementSummary>(
+        `https://fantasy.premierleague.com/api/element-summary/${baseEl.id}/`
+      );
+      const hist = Array.isArray(baseSummary.history) ? baseSummary.history : [];
+      const recent = lastNGwRowsBefore(hist, nextGw, 5);
+
+      const pp90 = pp90FromRecentOrSeason(recent, Number(baseEl.total_points) || 0, Number(baseEl.minutes) || 0);
+      const expMin = expMinutesFromRecent(recent, 80);
+
+      let epNext = 0;
+      const diffsNext = fixturesForTeamInGw(fixtures, baseEl.team, nextGw);
+      for (const d of diffsNext) {
+        epNext += pp90 * (expMin / 90) * fixtureMultiplier(d);
+      }
+
+      let ep5 = 0;
+      for (let gw = nextGw; gw <= Math.min(38, nextGw + 4); gw++) {
+        const diffs = fixturesForTeamInGw(fixtures, baseEl.team, gw);
+        for (const d of diffs) {
+          ep5 += pp90 * (expMin / 90) * fixtureMultiplier(d);
+        }
+      }
+
+      computed.push({
+        id: String(baseEl.id),
+        name: baseEl.web_name,
+        team: teamName.get(baseEl.team) ?? '',
+        pos: basePos,
+        price: basePrice,
+        epNextGw: Number.isFinite(epNext) ? epNext : 0,
+        epNext5: Number.isFinite(ep5) ? ep5 : 0,
+      });
+    }
+
+    const uniq = new Map<string, ForecastCandidate>();
+    for (const c of computed) uniq.set(c.id, c);
+    const base = uniq.get(String(baseEl.id))!;
+
+    const list = Array.from(uniq.values());
+
+    const topNextGw = list
+      .slice()
+      .sort((a, b) => b.epNextGw - a.epNextGw || b.epNext5 - a.epNext5)
+      .slice(0, 8);
+
+    const topNext5 = list
+      .slice()
+      .sort((a, b) => b.epNext5 - a.epNext5 || b.epNextGw - a.epNextGw)
+      .slice(0, 8);
+
+    const recommendedNextGw = topNextGw.length ? topNextGw[0] : null;
+    const recommendedNext5 = topNext5.length ? topNext5[0] : null;
+
+    const out: ForecastOptionsResp = {
+      nextGw,
+      player: base,
+      priceBand: { min: minPrice, max: maxPrice },
+      topNextGw,
+      topNext5,
+      recommendedNextGw,
+      recommendedNext5,
+      currentIsBestNextGw: !!recommendedNextGw && recommendedNextGw.id === base.id,
+      currentIsBestNext5: !!recommendedNext5 && recommendedNext5.id === base.id,
     };
 
     return NextResponse.json(out);
