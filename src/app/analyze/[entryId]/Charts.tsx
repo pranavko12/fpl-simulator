@@ -54,6 +54,7 @@ export function SparklineCard({
 
   const idSafe = useMemo(() => title.replace(/[^a-z0-9]+/gi, '-').toLowerCase(), [title]);
 
+  // Compute geometry even if empty; return null when empty.
   const computed = useMemo(() => {
     if (!series.length) return null;
 
@@ -68,9 +69,12 @@ export function SparklineCard({
 
     const sx = scaleLinear(xMin, xMax, padX, w - padX);
 
+    // Normal: low values (e.g., 0) should be near bottom => larger pixel y.
+    // That means mapping yMin -> (h - padY) and yMax -> padY.
+    // invertY flips that (useful for rank: lower is better => visually higher).
     const sy = invertY
-      ? scaleLinear(yMin, yMax, padY, h - padY) // rank-style: lower is better -> smaller y near top
-      : scaleLinear(yMin, yMax, h - padY, padY); // normal: 0 should be at bottom
+      ? scaleLinear(yMin, yMax, padY, h - padY) // yMin at top, yMax at bottom
+      : scaleLinear(yMin, yMax, h - padY, padY); // yMin at bottom, yMax at top
 
     const pts = series.map((p) => ({ x: sx(p.x), y: sy(p.y) }));
     const path = toPath(pts);
@@ -84,36 +88,22 @@ export function SparklineCard({
     return { xMin, xMax, yMinLabel, yMaxLabel, pts, path, label };
   }, [series, invertY, format]);
 
-  if (!series.length || !computed) {
-    return (
-      <div className="relative rounded-2xl border border-slate-200 bg-white/85 shadow-sm ring-1 ring-emerald-200/70">
-        <div className="pointer-events-none absolute -top-10 right-10 h-44 w-44 rounded-full bg-emerald-300/25 blur-3xl" />
-        <div className="rounded-2xl border-b border-slate-100 bg-gradient-to-br from-emerald-50 via-white to-white px-6 py-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-sm font-semibold text-slate-900">{title}</div>
-              {subtitle ? <div className="mt-1 text-xs text-slate-600">{subtitle}</div> : null}
-            </div>
-            <div className="text-sm font-semibold text-slate-900">-</div>
-          </div>
-        </div>
-        <div className="p-6 pt-5">
-          <div className="flex h-40 items-center justify-center overflow-hidden rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white text-sm text-slate-600">
-            No data available.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const hasData = !!computed && series.length > 0;
 
-  const { xMin, xMax, yMinLabel, yMaxLabel, pts, path, label } = computed;
+  const pts = computed?.pts ?? [];
+  const path = computed?.path ?? '';
+  const xMin = computed?.xMin ?? 0;
+  const xMax = computed?.xMax ?? 0;
+  const yMinLabel = computed?.yMinLabel ?? '-';
+  const yMaxLabel = computed?.yMaxLabel ?? '-';
+  const label = computed?.label ?? '-';
 
-  const activeIdx = hoverIdx != null ? clamp(hoverIdx, 0, pts.length - 1) : null;
+  const activeIdx = hasData && hoverIdx != null ? clamp(hoverIdx, 0, pts.length - 1) : null;
   const activePt = activeIdx != null ? pts[activeIdx] : null;
   const activeVal = activeIdx != null ? series[activeIdx] : null;
 
   function pickNearestIndex(clientX: number) {
-    if (!svgRef.current) return null;
+    if (!svgRef.current || !hasData) return null;
     const rect = svgRef.current.getBoundingClientRect();
     const x = ((clientX - rect.left) / rect.width) * w;
 
@@ -141,8 +131,9 @@ export function SparklineCard({
     setHoverIdx(null);
   }
 
+  // IMPORTANT: hooks must not be after an early return.
   const tooltip = useMemo(() => {
-    if (!activePt || !activeVal) return null;
+    if (!hasData || !activePt || !activeVal) return null;
 
     const tipW = 180;
     const tipH = 60;
@@ -151,7 +142,29 @@ export function SparklineCard({
     const y = clamp(activePt.y - tipH - 12, padY, h - padY - tipH);
 
     return { x, y, xLabel: `GW ${activeVal.x}`, yLabel: formatValue(format, activeVal.y) };
-  }, [activePt, activeVal, format]);
+  }, [hasData, activePt, activeVal, format]);
+
+  if (!hasData) {
+    return (
+      <div className="relative rounded-2xl border border-slate-200 bg-white/85 shadow-sm ring-1 ring-emerald-200/70">
+        <div className="pointer-events-none absolute -top-10 right-10 h-44 w-44 rounded-full bg-emerald-300/25 blur-3xl" />
+        <div className="rounded-2xl border-b border-slate-100 bg-gradient-to-br from-emerald-50 via-white to-white px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">{title}</div>
+              {subtitle ? <div className="mt-1 text-xs text-slate-600">{subtitle}</div> : null}
+            </div>
+            <div className="text-sm font-semibold text-slate-900">-</div>
+          </div>
+        </div>
+        <div className="p-6 pt-5">
+          <div className="flex h-40 items-center justify-center overflow-hidden rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50 to-white text-sm text-slate-600">
+            No data available.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative rounded-2xl border border-slate-200 bg-white/85 shadow-sm ring-1 ring-emerald-200/70">
@@ -196,22 +209,8 @@ export function SparklineCard({
             </defs>
 
             <g>
-              <line
-                x1={padX}
-                y1={h - padY}
-                x2={w - padX}
-                y2={h - padY}
-                className="stroke-emerald-200/50"
-                strokeWidth={1.2}
-              />
-              <line
-                x1={padX}
-                y1={padY}
-                x2={w - padX}
-                y2={padY}
-                className="stroke-emerald-200/50"
-                strokeWidth={1.2}
-              />
+              <line x1={padX} y1={h - padY} x2={w - padX} y2={h - padY} className="stroke-emerald-200/50" strokeWidth={1.2} />
+              <line x1={padX} y1={padY} x2={w - padX} y2={padY} className="stroke-emerald-200/50" strokeWidth={1.2} />
             </g>
 
             <path
@@ -220,26 +219,11 @@ export function SparklineCard({
               className="text-emerald-700"
             />
 
-            <path
-              d={path}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="3"
-              className="text-emerald-700"
-              filter={`url(#soft-${idSafe})`}
-            />
+            <path d={path} fill="none" stroke="currentColor" strokeWidth="3" className="text-emerald-700" filter={`url(#soft-${idSafe})`} />
 
             {hovering && activePt ? (
               <g className="text-emerald-700">
-                <line
-                  x1={activePt.x}
-                  y1={padY}
-                  x2={activePt.x}
-                  y2={h - padY}
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  className="text-emerald-700/35"
-                />
+                <line x1={activePt.x} y1={padY} x2={activePt.x} y2={h - padY} stroke="currentColor" strokeWidth="1.5" className="text-emerald-700/35" />
                 <circle cx={activePt.x} cy={activePt.y} r="10" fill="currentColor" className="text-emerald-600/18" />
                 <circle cx={activePt.x} cy={activePt.y} r="5" fill="currentColor" />
               </g>
@@ -247,17 +231,7 @@ export function SparklineCard({
 
             {hovering && tooltip ? (
               <g>
-                <rect
-                  x={tooltip.x}
-                  y={tooltip.y}
-                  width={180}
-                  height={60}
-                  rx={14}
-                  fill="white"
-                  opacity={0.98}
-                  stroke="#d1fae5"
-                  strokeWidth={1}
-                />
+                <rect x={tooltip.x} y={tooltip.y} width={180} height={60} rx={14} fill="white" opacity={0.98} stroke="#d1fae5" strokeWidth={1} />
                 <text x={tooltip.x + 12} y={tooltip.y + 23} fontSize={12} fill="#0f172a" fontWeight={700}>
                   {tooltip.xLabel}
                 </text>

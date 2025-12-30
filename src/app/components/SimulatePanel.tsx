@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import Image from 'next/image';
 
 type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
 
@@ -79,7 +80,9 @@ function Pill({
       onClick={onClick}
       className={[
         'px-3 py-2 text-xs font-semibold rounded-full border transition',
-        active ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-900 border-slate-200 hover:bg-slate-50',
+        active
+          ? 'bg-slate-900 text-white border-slate-900'
+          : 'bg-white text-slate-900 border-slate-200 hover:bg-slate-50',
       ].join(' ')}
     >
       {children}
@@ -102,17 +105,17 @@ function CandidateRow({
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3">
       <div className="flex items-center gap-3 min-w-0">
-        <div className="h-14 w-14 rounded-xl bg-slate-100 overflow-hidden flex items-center justify-center shrink-0">
+        <div className="relative h-14 w-14 rounded-xl bg-slate-100 overflow-hidden flex items-center justify-center shrink-0">
           {img ? (
-            <img
+            <Image
               src={img}
               alt={c.name}
-              className="h-full w-full object-cover"
-              loading="lazy"
+              fill
+              sizes="56px"
+              className="object-cover"
               referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = '';
-              }}
+              unoptimized
+              onError={() => {}}
             />
           ) : (
             <div className="text-[10px] text-slate-500 font-semibold">No photo</div>
@@ -297,9 +300,17 @@ export default function SimulatePanel({
       <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-slate-50 p-4">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="h-16 w-16 rounded-2xl overflow-hidden bg-slate-100 shrink-0 flex items-center justify-center">
+            <div className="relative h-16 w-16 rounded-2xl overflow-hidden bg-slate-100 shrink-0 flex items-center justify-center">
               {img ? (
-                <img src={img} alt={title} className="h-full w-full object-cover" loading="lazy" referrerPolicy="no-referrer" />
+                <Image
+                  src={img}
+                  alt={title}
+                  fill
+                  sizes="64px"
+                  className="object-cover"
+                  referrerPolicy="no-referrer"
+                  unoptimized
+                />
               ) : (
                 <div className="text-[10px] text-slate-500 font-semibold">No photo</div>
               )}
@@ -403,7 +414,10 @@ export default function SimulatePanel({
           >
             <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-slate-900 to-slate-800">
               <div className="text-sm font-semibold text-white">Better option analysis</div>
-              <button className="rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15" onClick={closeBetter}>
+              <button
+                className="rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+                onClick={closeBetter}
+              >
                 Close
               </button>
             </div>
@@ -441,9 +455,13 @@ export default function SimulatePanel({
                         img={photoUrl(rangeData.player.code, '250x250')}
                         badge={
                           rangeData.currentIsBestByPoints ? (
-                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">Best in range</span>
+                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                              Best in range
+                            </span>
                           ) : (
-                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">Baseline</span>
+                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                              Baseline
+                            </span>
                           )
                         }
                         right={
@@ -465,7 +483,9 @@ export default function SimulatePanel({
                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
                           <div className="flex items-center justify-between">
                             <div className="text-sm font-semibold text-slate-900">Top points gained</div>
-                            <div className="text-xs text-slate-500">GW {fromGw} to {toGw}</div>
+                            <div className="text-xs text-slate-500">
+                              GW {fromGw} to {toGw}
+                            </div>
                           </div>
 
                           <div className="mt-3 space-y-2">
@@ -501,7 +521,9 @@ export default function SimulatePanel({
                         <div className="rounded-2xl border border-slate-200 bg-white p-4">
                           <div className="flex items-center justify-between">
                             <div className="text-sm font-semibold text-slate-900">Top price increase</div>
-                            <div className="text-xs text-slate-500">GW {fromGw} to {toGw}</div>
+                            <div className="text-xs text-slate-500">
+                              GW {fromGw} to {toGw}
+                            </div>
                           </div>
 
                           <div className="mt-3 space-y-2">
@@ -552,9 +574,13 @@ export default function SimulatePanel({
                         img={photoUrl(forecastData.player.code, '250x250')}
                         badge={
                           forecastData.currentIsBestNextGw ? (
-                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">Best next GW</span>
+                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                              Best next GW
+                            </span>
                           ) : (
-                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">Baseline</span>
+                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                              Baseline
+                            </span>
                           )
                         }
                         right={
@@ -585,7 +611,11 @@ export default function SimulatePanel({
                                 </span>
                               }
                               meta={<span>GW {forecastData.nextGw} xPts</span>}
-                              right={<div className="text-sm font-semibold text-emerald-900">{forecastData.recommendedNextGw.epNextGw.toFixed(2)}</div>}
+                              right={
+                                <div className="text-sm font-semibold text-emerald-900">
+                                  {forecastData.recommendedNextGw.epNextGw.toFixed(2)}
+                                </div>
+                              }
                             />
                           </div>
                         </div>
@@ -640,9 +670,13 @@ export default function SimulatePanel({
                         img={photoUrl(forecastData.player.code, '250x250')}
                         badge={
                           forecastData.currentIsBestNext5 ? (
-                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">Best next 5</span>
+                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800">
+                              Best next 5
+                            </span>
                           ) : (
-                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">Baseline</span>
+                            <span className="px-2 py-1 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-700">
+                              Baseline
+                            </span>
                           )
                         }
                         right={
@@ -673,7 +707,11 @@ export default function SimulatePanel({
                                 </span>
                               }
                               meta={<span>Next 5 xPts</span>}
-                              right={<div className="text-sm font-semibold text-emerald-900">{forecastData.recommendedNext5.epNext5.toFixed(2)}</div>}
+                              right={
+                                <div className="text-sm font-semibold text-emerald-900">
+                                  {forecastData.recommendedNext5.epNext5.toFixed(2)}
+                                </div>
+                              }
                             />
                           </div>
                         </div>
@@ -682,7 +720,9 @@ export default function SimulatePanel({
                       <div className="rounded-2xl border border-slate-200 bg-white p-4">
                         <div className="flex items-center justify-between">
                           <div className="text-sm font-semibold text-slate-900">Top options</div>
-                          <div className="text-xs text-slate-500">GW {forecastData.nextGw} to {Math.min(38, forecastData.nextGw + 4)}</div>
+                          <div className="text-xs text-slate-500">
+                            GW {forecastData.nextGw} to {Math.min(38, forecastData.nextGw + 4)}
+                          </div>
                         </div>
 
                         <div className="mt-3 space-y-2">

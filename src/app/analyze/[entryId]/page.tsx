@@ -11,11 +11,6 @@ function formatRank(n: number) {
   return Math.round(n).toLocaleString();
 }
 
-function formatNumber(n: number) {
-  if (!Number.isFinite(n)) return '-';
-  return Math.round(n).toLocaleString();
-}
-
 export default async function AnalyzeEntryIdPage({
   params,
 }: {

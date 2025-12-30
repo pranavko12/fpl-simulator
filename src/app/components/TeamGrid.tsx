@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import SimulatePanel from './SimulatePanel';
 
 type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
@@ -94,10 +95,10 @@ function fmtM(n: number): string {
   return `${n.toFixed(1)}M`;
 }
 
-function playerPhotoUrl(p: UiPlayer): string | null {
+function playerPhotoUrl(p: UiPlayer, size: '110x140' | '250x250' = '110x140'): string | null {
   const code = typeof p.code === 'number' ? p.code : null;
   if (!code) return null;
-  return `https://resources.premierleague.com/premierleague/photos/players/110x140/p${code}.png`;
+  return `https://resources.premierleague.com/premierleague/photos/players/${size}/p${code}.png`;
 }
 
 export default function TeamGrid({ players, loading, error, teamGw, prefill, teamValue }: Props) {
@@ -193,6 +194,7 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
         team: pp.team,
         price: pp.price,
         points: pp.points,
+        code: null,
       };
     };
 
@@ -426,16 +428,18 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                     {picked ? (
                       <div className="flex flex-col items-center gap-1">
                         {url ? (
-                          <img
-                            src={url}
-                            alt={picked.name}
-                            className="h-14 w-14 rounded-full object-cover border border-white/60 shadow"
-                            loading="lazy"
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              (e.currentTarget as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
+                          <div className="relative h-14 w-14 rounded-full overflow-hidden border border-white/60 shadow">
+                            <Image
+                              src={url}
+                              alt={picked.name}
+                              fill
+                              sizes="56px"
+                              className="object-cover"
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                              unoptimized
+                            />
+                          </div>
                         ) : null}
                         <span className="font-semibold leading-tight line-clamp-2">{picked.name}</span>
                         <span className="text-xs text-slate-300">{picked.team}</span>
@@ -473,11 +477,7 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
               {!loading && !error && (
                 <>
                   <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
-                    <select
-                      className="w-full rounded border px-3 py-2 text-sm"
-                      value={teamFilter}
-                      onChange={(e) => setTeamFilter(e.target.value)}
-                    >
+                    <select className="w-full rounded border px-3 py-2 text-sm" value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
                       {teamOptions.map((t) => (
                         <option key={t} value={t}>
                           {t === 'All' ? 'All Teams' : t}
@@ -485,11 +485,7 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                       ))}
                     </select>
 
-                    <select
-                      className="w-full rounded border px-3 py-2 text-sm"
-                      value={maxPriceFilter}
-                      onChange={(e) => setMaxPriceFilter(e.target.value)}
-                    >
+                    <select className="w-full rounded border px-3 py-2 text-sm" value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)}>
                       {priceRange.steps.map((s) => (
                         <option key={s} value={s}>
                           {s === 'Any' ? 'Max Price Any' : `Max Price ${s}M`}
@@ -516,6 +512,7 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                     </select>
 
                     <button
+                      type="button"
                       onClick={() => {
                         setTeamFilter('All');
                         setMaxPriceFilter('Any');
@@ -543,16 +540,18 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
                           onClick={() => choosePlayer(p)}
                         >
                           {url ? (
-                            <img
-                              src={url}
-                              alt={p.name}
-                              className="h-10 w-10 rounded-full object-cover border border-slate-200"
-                              loading="lazy"
-                              referrerPolicy="no-referrer"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).style.display = 'none';
-                              }}
-                            />
+                            <div className="relative h-10 w-10 rounded-full overflow-hidden border border-slate-200">
+                              <Image
+                                src={url}
+                                alt={p.name}
+                                fill
+                                sizes="40px"
+                                className="object-cover"
+                                loading="lazy"
+                                referrerPolicy="no-referrer"
+                                unoptimized
+                              />
+                            </div>
                           ) : (
                             <div className="h-10 w-10 rounded-full bg-slate-200" />
                           )}
