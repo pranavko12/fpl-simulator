@@ -111,6 +111,7 @@ type ApiStatsResp = {
 
 type BetterCandidate = {
   id: string;
+  code: number | null;
   name: string;
   team: string;
   pos: ElementType;
@@ -133,6 +134,7 @@ type BetterOptionsResp = {
 
 type ForecastCandidate = {
   id: string;
+  code: number | null;
   name: string;
   team: string;
   pos: ElementType;
@@ -534,6 +536,7 @@ export async function GET(req: NextRequest) {
 
     const baseCandidate: BetterCandidate = {
       id: String(baseEl.id),
+      code: Number.isFinite(baseEl.code) ? baseEl.code : null,
       name: baseEl.web_name,
       team: teamName.get(baseEl.team) ?? '',
       pos: basePos,
@@ -571,6 +574,7 @@ export async function GET(req: NextRequest) {
 
         return {
           id: String(el.id),
+          code: Number.isFinite(el.code) ? el.code : null,
           name: el.web_name,
           team: teamName.get(el.team) ?? '',
           pos: basePos,
@@ -679,20 +683,17 @@ export async function GET(req: NextRequest) {
 
       let epNext = 0;
       const diffsNext = fixturesForTeamInGw(fixtures, el.team, nextGw);
-      for (const d of diffsNext) {
-        epNext += pp90 * (expMin / 90) * fixtureMultiplier(d);
-      }
+      for (const d of diffsNext) epNext += pp90 * (expMin / 90) * fixtureMultiplier(d);
 
       let ep5 = 0;
       for (let gw = nextGw; gw <= Math.min(38, nextGw + 4); gw++) {
         const diffs = fixturesForTeamInGw(fixtures, el.team, gw);
-        for (const d of diffs) {
-          ep5 += pp90 * (expMin / 90) * fixtureMultiplier(d);
-        }
+        for (const d of diffs) ep5 += pp90 * (expMin / 90) * fixtureMultiplier(d);
       }
 
       computed.push({
         id: String(el.id),
+        code: Number.isFinite(el.code) ? el.code : null,
         name: el.web_name,
         team: teamName.get(el.team) ?? '',
         pos: basePos,
@@ -702,8 +703,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const baseCandidate = computed.find((c) => c.id === String(baseEl.id));
-    if (!baseCandidate) {
+    if (!computed.some((c) => c.id === String(baseEl.id))) {
       const baseSummary = await fetchJson<ElementSummary>(
         `https://fantasy.premierleague.com/api/element-summary/${baseEl.id}/`
       );
@@ -715,20 +715,17 @@ export async function GET(req: NextRequest) {
 
       let epNext = 0;
       const diffsNext = fixturesForTeamInGw(fixtures, baseEl.team, nextGw);
-      for (const d of diffsNext) {
-        epNext += pp90 * (expMin / 90) * fixtureMultiplier(d);
-      }
+      for (const d of diffsNext) epNext += pp90 * (expMin / 90) * fixtureMultiplier(d);
 
       let ep5 = 0;
       for (let gw = nextGw; gw <= Math.min(38, nextGw + 4); gw++) {
         const diffs = fixturesForTeamInGw(fixtures, baseEl.team, gw);
-        for (const d of diffs) {
-          ep5 += pp90 * (expMin / 90) * fixtureMultiplier(d);
-        }
+        for (const d of diffs) ep5 += pp90 * (expMin / 90) * fixtureMultiplier(d);
       }
 
       computed.push({
         id: String(baseEl.id),
+        code: Number.isFinite(baseEl.code) ? baseEl.code : null,
         name: baseEl.web_name,
         team: teamName.get(baseEl.team) ?? '',
         pos: basePos,
