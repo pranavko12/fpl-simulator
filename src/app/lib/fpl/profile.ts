@@ -16,13 +16,11 @@ export type PredictionProfile = {
   avgPointsPerGw: number;
   bestGwPoints: number;
   worstGwPoints: number;
-
   captainGws: number;
   captainDistinct: number;
   captainChanges: number;
   captainTopShare: number;
   captainEntropy: number;
-
   riskScore: number;
   riskBand: 'Low' | 'Medium' | 'High';
 };
@@ -35,7 +33,7 @@ function mean(nums: number[]) {
 function stddev(nums: number[]) {
   if (nums.length < 2) return 0;
   const m = mean(nums);
-  const v = mean(nums.map(x => (x - m) ** 2));
+  const v = mean(nums.map((x) => (x - m) ** 2));
   return Math.sqrt(v);
 }
 
@@ -62,14 +60,17 @@ export function buildPredictionProfile(
   captains: GwCaptain[] = []
 ): PredictionProfile {
   const gws = history.current ?? [];
-  const points = gws.map(g => g.points);
-  const transferCounts = gws.map(g => g.event_transfers);
-  const hitCosts = gws.map(g => g.event_transfers_cost);
+  const points = gws.map((g) => g.points);
+  const transferCounts = gws.map((g) => g.event_transfers);
+  const hitCosts = gws.map((g) => g.event_transfers_cost);
 
   const chipTiming: Record<string, number> = {};
   for (const c of history.chips ?? []) chipTiming[c.name] = c.event;
 
-  const capElements = captains.slice().sort((a, b) => a.gw - b.gw).map(c => c.captainElement);
+  const capElements = captains
+    .slice()
+    .sort((a, b) => a.gw - b.gw)
+    .map((c) => c.captainElement);
 
   const capCounts = new Map<number, number>();
   for (const e of capElements) capCounts.set(e, (capCounts.get(e) ?? 0) + 1);
@@ -116,13 +117,11 @@ export function buildPredictionProfile(
     avgPointsPerGw: mean(points),
     bestGwPoints: points.length ? Math.max(...points) : 0,
     worstGwPoints: points.length ? Math.min(...points) : 0,
-
     captainGws: capGws,
     captainDistinct: capDistinct,
     captainChanges: capChanges,
     captainTopShare: topShare,
     captainEntropy: capEntropy,
-
     riskScore,
     riskBand,
   };

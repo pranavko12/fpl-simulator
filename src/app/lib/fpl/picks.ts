@@ -1,5 +1,5 @@
 import { fplFetchOrNull } from './client';
-import type { FplPicksResponse } from './types';
+import type { PicksResponse } from './types';
 
 export type GwCaptain = {
   gw: number;
@@ -19,8 +19,8 @@ export async function fetchCaptainsForGws(entryId: number, gws: number[], concur
 
   for (const batch of batches) {
     const res = await Promise.all(
-      batch.map(async gw => {
-        const data = await fplFetchOrNull<FplPicksResponse>(`/entry/${entryId}/event/${gw}/picks/`, {
+      batch.map(async (gw) => {
+        const data = await fplFetchOrNull<PicksResponse>(`/entry/${entryId}/event/${gw}/picks/`, {
           timeoutMs: 6500,
           retries: 1,
           revalidateSeconds: 900,
@@ -28,8 +28,8 @@ export async function fetchCaptainsForGws(entryId: number, gws: number[], concur
 
         if (!data?.picks?.length) return null;
 
-        const captainElement = data.picks.find(p => p.is_captain)?.element ?? null;
-        const viceElement = data.picks.find(p => p.is_vice_captain)?.element ?? null;
+        const captainElement = data.picks.find((p) => p.is_captain)?.element ?? null;
+        const viceElement = data.picks.find((p) => p.is_vice_captain)?.element ?? null;
 
         if (!captainElement) return null;
         return { gw, captainElement, viceElement };
