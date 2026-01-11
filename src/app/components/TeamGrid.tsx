@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import SimulatePanel from './SimulatePanel';
+import PlayerSelectModal from './PlayerSelectModal';
 
 type ElementType = 'GK' | 'DEF' | 'MID' | 'FWD';
 
@@ -454,130 +455,35 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
           </div>
         ))}
 
-        {showModal && (
-          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl p-6 max-h-[80vh] w-[90vw] max-w-3xl overflow-y-auto shadow-lg relative">
-              <button
-                className="absolute top-2 right-3 text-gray-500 text-2xl font-bold"
-                onClick={() => {
-                  setShowModal(false);
-                  setModalPosition(null);
-                  setModalIndex(null);
-                }}
-                aria-label="Close"
-              >
-                ×
-              </button>
-
-              <h2 className="text-lg font-semibold mb-4">Select {modalPosition}</h2>
-
-              {loading && <div className="text-sm text-slate-500">Loading players</div>}
-              {error && <div className="text-sm text-red-600">Error {error}</div>}
-
-              {!loading && !error && (
-                <>
-                  <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-5">
-                    <select className="w-full rounded border px-3 py-2 text-sm" value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}>
-                      {teamOptions.map((t) => (
-                        <option key={t} value={t}>
-                          {t === 'All' ? 'All Teams' : t}
-                        </option>
-                      ))}
-                    </select>
-
-                    <select className="w-full rounded border px-3 py-2 text-sm" value={maxPriceFilter} onChange={(e) => setMaxPriceFilter(e.target.value)}>
-                      {priceRange.steps.map((s) => (
-                        <option key={s} value={s}>
-                          {s === 'Any' ? 'Max Price Any' : `Max Price ${s}M`}
-                        </option>
-                      ))}
-                    </select>
-
-                    <input
-                      type="text"
-                      placeholder="Search name"
-                      className="w-full rounded border px-3 py-2 text-sm"
-                      value={searchQ}
-                      onChange={(e) => setSearchQ(e.target.value)}
-                    />
-
-                    <select
-                      className="w-full rounded border px-3 py-2 text-sm"
-                      value={sortKey}
-                      onChange={(e) => setSortKey(e.target.value as 'points_desc' | 'price_desc' | 'price_asc')}
-                    >
-                      <option value="points_desc">Sort Most points</option>
-                      <option value="price_desc">Sort Highest price</option>
-                      <option value="price_asc">Sort Lowest price</option>
-                    </select>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTeamFilter('All');
-                        setMaxPriceFilter('Any');
-                        setSearchQ('');
-                        setSortKey('points_desc');
-                      }}
-                      className="rounded border px-3 py-2 text-sm bg-slate-50 hover:bg-slate-100"
-                    >
-                      Reset Filters
-                    </button>
-                  </div>
-
-                  <ul className="space-y-2">
-                    {filteredPlayers.length === 0 && <li className="text-sm text-slate-500">No players match</li>}
-                    {filteredPlayers.map((p) => {
-                      const priceVal = toNum(p.price);
-                      const priceDisplay = priceVal ? `${priceVal.toFixed(1)}M` : '';
-                      const pts = typeof p.points === 'number' ? p.points : 0;
-                      const url = playerPhotoUrl(p);
-
-                      return (
-                        <li
-                          key={p.id}
-                          className="p-3 rounded hover:bg-blue-100 cursor-pointer transition flex items-center gap-3"
-                          onClick={() => choosePlayer(p)}
-                        >
-                          {url ? (
-                            <div className="relative h-10 w-10 rounded-full overflow-hidden border border-slate-200">
-                              <Image
-                                src={url}
-                                alt={p.name}
-                                fill
-                                sizes="40px"
-                                className="object-cover"
-                                loading="lazy"
-                                referrerPolicy="no-referrer"
-                                unoptimized
-                              />
-                            </div>
-                          ) : (
-                            <div className="h-10 w-10 rounded-full bg-slate-200" />
-                          )}
-
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-3">
-                              <span className="font-medium truncate">
-                                {p.name}
-                                {p.element_type ? ` (${p.element_type})` : ''}
-                              </span>
-                              <div className="flex items-center gap-3 shrink-0">
-                                <span className="text-sm font-semibold text-slate-700">{pts} pts</span>
-                                <span className="text-sm font-semibold text-slate-700">{priceDisplay}</span>
-                              </div>
-                            </div>
-                            {p.team && <div className="mt-1 text-base font-bold text-slate-800">{p.team}</div>}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        <PlayerSelectModal
+          open={showModal}
+          modalPosition={modalPosition}
+          loading={loading}
+          error={error}
+          teamOptions={teamOptions}
+          priceSteps={priceRange.steps}
+          teamFilter={teamFilter}
+          setTeamFilter={setTeamFilter}
+          maxPriceFilter={maxPriceFilter}
+          setMaxPriceFilter={setMaxPriceFilter}
+          searchQ={searchQ}
+          setSearchQ={setSearchQ}
+          sortKey={sortKey}
+          setSortKey={setSortKey}
+          onResetFilters={() => {
+            setTeamFilter('All');
+            setMaxPriceFilter('Any');
+            setSearchQ('');
+            setSortKey('points_desc');
+          }}
+          filteredPlayers={filteredPlayers}
+          onChoosePlayer={choosePlayer}
+          onClose={() => {
+            setShowModal(false);
+            setModalPosition(null);
+            setModalIndex(null);
+          }}
+        />
 
         <div className="mt-2 flex flex-col gap-3 items-center">
           <div className="flex flex-col md:flex-row items-center gap-3">
@@ -636,19 +542,11 @@ export default function TeamGrid({ players, loading, error, teamGw, prefill, tea
             </button>
           </div>
 
-          {statsError && (
-            <div className="text-sm text-red-200 bg-red-950/30 border border-red-400/30 px-4 py-2 rounded">
-              {statsError}
-            </div>
-          )}
+          {statsError && <div className="text-sm text-red-200 bg-red-950/30 border border-red-400/30 px-4 py-2 rounded">{statsError}</div>}
 
           {!canRun && (
             <div className="text-center text-sm text-white/90">
-              {hasFullSquad
-                ? isImported
-                  ? ''
-                  : 'Over budget. Adjust picks or import a team.'
-                : 'Select all 15 players to enable simulation.'}
+              {hasFullSquad ? (isImported ? '' : 'Over budget. Adjust picks or import a team.') : 'Select all 15 players to enable simulation.'}
             </div>
           )}
         </div>
