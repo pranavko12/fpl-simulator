@@ -11,6 +11,115 @@ function formatRank(n: number) {
   return Math.round(n).toLocaleString();
 }
 
+function mean(nums: number[]) {
+  if (!nums.length) return 0;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+function stddev(nums: number[]) {
+  if (nums.length < 2) return 0;
+  const m = mean(nums);
+  return Math.sqrt(mean(nums.map((x) => (x - m) ** 2)));
+}
+
+function slope(xs: number[], ys: number[]) {
+  if (xs.length !== ys.length || xs.length < 2) return 0;
+  const xBar = mean(xs);
+  const yBar = mean(ys);
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < xs.length; i++) {
+    num += (xs[i] - xBar) * (ys[i] - yBar);
+    den += (xs[i] - xBar) ** 2;
+  }
+  return den === 0 ? 0 : num / den;
+}
+
+type SeasonSummary = {
+  available: boolean;
+  headline: string;
+  bullets: string[];
+  good: string[];
+  bad: string[];
+};
+
+function buildSeasonSummary(history: FplHistory, profile: ReturnType<typeof buildPredictionProfile>): SeasonSummary {
+  const current = history.current ?? [];
+  if (current.length < 2) {
+    return {
+      available: false,
+      headline: 'Not enough gameweeks to summarize trends yet.',
+      bullets: [],
+      good: [],
+      bad: [],
+    };
+  }
+
+  const gws = current.map((g) => g.event);
+  const points = current.map((g) => g.points);
+  const ranksLog = current.map((g) => Math.log(Math.max(1, g.overall_rank || 1)));
+
+  const rankSlope = slope(gws, ranksLog);
+  const improving = rankSlope < -0.01;
+  const declining = rankSlope > 0.01;
+
+  const volatility = stddev(points);
+  const volBand = volatility >= 20 ? 'high' : volatility >= 14 ? 'moderate' : 'low';
+
+  const bestIdx = points.indexOf(Math.max(...points));
+  const worstIdx = points.indexOf(Math.min(...points));
+
+  const recent = points.slice(-Math.min(5, points.length));
+  const early = points.slice(0, Math.min(5, points.length));
+
+  const good: string[] = [];
+  const bad: string[] = [];
+
+  if (improving && mean(recent) >= mean(points)) {
+    good.push('Recent decisions are producing consistent rank gains.');
+  }
+  if (volBand === 'low' && profile.totalHitsPoints <= 8) {
+    good.push('Low volatility with limited hits is helping long-term rank stability.');
+  }
+  if (mean(recent) > mean(early) + 5) {
+    good.push('Scoring has improved noticeably compared to the opening weeks.');
+  }
+
+  if (profile.totalHitsPoints >= 16) {
+    bad.push('Heavy hit usage has significantly reduced your season total.');
+  }
+  if (volBand === 'high') {
+    bad.push('High week-to-week volatility is stalling sustained rank progress.');
+  }
+  if (profile.captainChanges >= Math.max(6, Math.floor(current.length * 0.6))) {
+    bad.push('Frequent captain changes are increasing variance without clear payoff.');
+  }
+  if (profile.avgTransfersPerGw >= 1.6) {
+    bad.push('High transfer volume suggests reactive decision-making.');
+  }
+
+  const last = current.at(-1);
+  const lastPoints = points.at(-1) ?? 0;
+  const lastRank = last?.overall_rank ?? 0;
+
+  const headline = `${improving ? 'Rank improving' : declining ? 'Rank declining' : 'Rank flat'} · ${volBand} volatility`;
+
+  return {
+    available: true,
+    headline,
+    bullets: [
+      `Latest GW: ${lastPoints} pts · Overall rank: ${formatRank(lastRank)}.`,
+      `High point: GW ${current[bestIdx].event} (${points[bestIdx]} pts). Low point: GW ${current[worstIdx].event} (${points[worstIdx]} pts).`,
+      `Season avg: ${mean(points).toFixed(1)} pts/GW · Last ${recent.length} avg: ${mean(recent).toFixed(1)} pts/GW.`,
+      `Hits cost: ${profile.totalHitsPoints} pts · Captain changes: ${profile.captainChanges} · Avg transfers/GW: ${profile.avgTransfersPerGw.toFixed(
+        2
+      )}.`,
+    ],
+    good: good.slice(0, 2),
+    bad: bad.slice(0, 2),
+  };
+}
+
 export default async function AnalyzeEntryIdPage({
   params,
 }: {
@@ -87,6 +196,7 @@ export default async function AnalyzeEntryIdPage({
   if (bootstrap?.elements?.length) for (const e of bootstrap.elements) elementName.set(e.id, e.web_name);
 
   const profile = buildPredictionProfile(entry, history, transfers, captains);
+  const seasonSummary = buildSeasonSummary(history, profile);
 
   const pointsSeries = (history.current ?? []).map((g) => ({ x: g.event, y: g.points }));
   const rankSeries = (history.current ?? []).map((g) => ({ x: g.event, y: g.overall_rank }));
@@ -149,6 +259,44 @@ export default async function AnalyzeEntryIdPage({
               </section>
             </div>
           </header>
+
+          <section className="mt-6">
+            <Panel title="Season summary" subtitle="Narrative based on your points and rank trends">
+              {seasonSummary.available ? (
+                <div className="mt-4 space-y-4">
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                    <div className="font-semibold text-slate-900">{seasonSummary.headline}</div>
+                  </div>
+
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+                    {seasonSummary.bullets.map((b) => (
+                      <li key={b}>{b}</li>
+                    ))}
+                  </ul>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                      <div className="text-xs font-semibold text-slate-600">Good decisions</div>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                        {seasonSummary.good.length ? seasonSummary.good.map((g) => <li key={g}>{g}</li>) : <li>Not enough signal yet.</li>}
+                      </ul>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                      <div className="text-xs font-semibold text-slate-600">Bad decisions / leaks</div>
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
+                        {seasonSummary.bad.length ? seasonSummary.bad.map((b) => <li key={b}>{b}</li>) : <li>No obvious leaks detected.</li>}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
+                  {seasonSummary.headline}
+                </div>
+              )}
+            </Panel>
+          </section>
 
           <section className="mt-6 grid gap-4 lg:grid-cols-3">
             <Panel title="Behavior" subtitle="Transfer and scoring behavior">
