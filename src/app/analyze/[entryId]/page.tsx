@@ -35,10 +35,17 @@ function slope(xs: number[], ys: number[]) {
   return den === 0 ? 0 : num / den;
 }
 
+type SeasonStat = {
+  label: string;
+  value: string;
+  meta?: string;
+};
+
 type SeasonSummary = {
   available: boolean;
   headline: string;
-  bullets: string[];
+  details: string[];
+  stats: SeasonStat[];
   good: string[];
   bad: string[];
 };
@@ -49,7 +56,8 @@ function buildSeasonSummary(history: FplHistory, profile: ReturnType<typeof buil
     return {
       available: false,
       headline: 'Not enough gameweeks to summarize trends yet.',
-      bullets: [],
+      details: [],
+      stats: [],
       good: [],
       bad: [],
     };
@@ -75,46 +83,40 @@ function buildSeasonSummary(history: FplHistory, profile: ReturnType<typeof buil
   const good: string[] = [];
   const bad: string[] = [];
 
-  if (improving && mean(recent) >= mean(points)) {
-    good.push('Recent decisions are producing consistent rank gains.');
-  }
-  if (volBand === 'low' && profile.totalHitsPoints <= 8) {
-    good.push('Low volatility with limited hits is helping long-term rank stability.');
-  }
-  if (mean(recent) > mean(early) + 5) {
-    good.push('Scoring has improved noticeably compared to the opening weeks.');
-  }
+  if (improving && mean(recent) >= mean(points)) good.push('Recent decisions are producing consistent rank gains.');
+  if (volBand === 'low' && profile.totalHitsPoints <= 8) good.push('Low volatility with limited hits is helping long-term rank stability.');
+  if (mean(recent) > mean(early) + 5) good.push('Scoring has improved noticeably compared to the opening weeks.');
 
-  if (profile.totalHitsPoints >= 16) {
-    bad.push('Heavy hit usage has significantly reduced your season total.');
-  }
-  if (volBand === 'high') {
-    bad.push('High week-to-week volatility is stalling sustained rank progress.');
-  }
-  if (profile.captainChanges >= Math.max(6, Math.floor(current.length * 0.6))) {
-    bad.push('Frequent captain changes are increasing variance without clear payoff.');
-  }
-  if (profile.avgTransfersPerGw >= 1.6) {
-    bad.push('High transfer volume suggests reactive decision-making.');
-  }
+  if (profile.totalHitsPoints >= 16) bad.push('Heavy hit usage has significantly reduced your season total.');
+  if (volBand === 'high') bad.push('High week-to-week volatility is stalling sustained rank progress.');
+  if (profile.captainChanges >= Math.max(6, Math.floor(current.length * 0.6))) bad.push('Frequent captain changes are increasing variance without clear payoff.');
+  if (profile.avgTransfersPerGw >= 1.6) bad.push('High transfer volume suggests reactive decision-making.');
 
   const last = current.at(-1);
   const lastPoints = points.at(-1) ?? 0;
   const lastRank = last?.overall_rank ?? 0;
 
-  const headline = `${improving ? 'Rank improving' : declining ? 'Rank declining' : 'Rank flat'} · ${volBand} volatility`;
+  const trendLabel = improving ? 'Rank improving' : declining ? 'Rank declining' : 'Rank flat';
+  const headline = `${trendLabel} · ${volBand} volatility`;
+
+  const stats: SeasonStat[] = [
+    { label: 'Latest GW', value: `${lastPoints} pts`, meta: `Overall rank: ${formatRank(lastRank)}` },
+    { label: 'High point', value: `GW ${current[bestIdx].event}`, meta: `${points[bestIdx]} pts` },
+    { label: 'Low point', value: `GW ${current[worstIdx].event}`, meta: `${points[worstIdx]} pts` },
+    { label: 'Season averages', value: `${mean(points).toFixed(1)} pts/GW`, meta: `Last ${recent.length}: ${mean(recent).toFixed(1)} pts/GW` },
+  ];
+
+  const details = [
+    `Hits cost: ${profile.totalHitsPoints} pts`,
+    `Captain changes: ${profile.captainChanges}`,
+    `Avg transfers/GW: ${profile.avgTransfersPerGw.toFixed(2)}`,
+  ];
 
   return {
     available: true,
     headline,
-    bullets: [
-      `Latest GW: ${lastPoints} pts · Overall rank: ${formatRank(lastRank)}.`,
-      `High point: GW ${current[bestIdx].event} (${points[bestIdx]} pts). Low point: GW ${current[worstIdx].event} (${points[worstIdx]} pts).`,
-      `Season avg: ${mean(points).toFixed(1)} pts/GW · Last ${recent.length} avg: ${mean(recent).toFixed(1)} pts/GW.`,
-      `Hits cost: ${profile.totalHitsPoints} pts · Captain changes: ${profile.captainChanges} · Avg transfers/GW: ${profile.avgTransfersPerGw.toFixed(
-        2
-      )}.`,
-    ],
+    details,
+    stats,
     good: good.slice(0, 2),
     bad: bad.slice(0, 2),
   };
@@ -263,37 +265,87 @@ export default async function AnalyzeEntryIdPage({
           <section className="mt-6">
             <Panel title="Season summary" subtitle="Narrative based on your points and rank trends">
               {seasonSummary.available ? (
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-                    <div className="font-semibold text-slate-900">{seasonSummary.headline}</div>
+                <div className="mt-4 space-y-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-900">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                        {seasonSummary.headline}
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {seasonSummary.details.map((d) => (
+                          <span key={d} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                            {d}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Link
+                      href={`/analyze/${id}/GameweekDetails`}
+                      className="inline-flex w-fit items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+                    >
+                      Gameweek analysis
+                      <span aria-hidden className="text-lg leading-none">→</span>
+                    </Link>
                   </div>
 
-                  <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                    {seasonSummary.bullets.map((b) => (
-                      <li key={b}>{b}</li>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {seasonSummary.stats.map((s) => (
+                      <div key={s.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                        <div className="text-xs font-semibold text-slate-500">{s.label}</div>
+                        <div className="mt-2 text-2xl font-extrabold tracking-tight text-slate-900">{s.value}</div>
+                        {s.meta ? <div className="mt-2 text-sm font-medium text-slate-600">{s.meta}</div> : null}
+                      </div>
                     ))}
-                  </ul>
+                  </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                      <div className="text-xs font-semibold text-slate-600">Good decisions</div>
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {seasonSummary.good.length ? seasonSummary.good.map((g) => <li key={g}>{g}</li>) : <li>Not enough signal yet.</li>}
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-extrabold uppercase tracking-wide text-emerald-900">Good decisions</div>
+                        <span className="inline-flex items-center rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-200">
+                          Signal
+                        </span>
+                      </div>
+                      <ul className="mt-3 space-y-2">
+                        {seasonSummary.good.length ? (
+                          seasonSummary.good.map((g) => (
+                            <li key={g} className="flex gap-3 rounded-xl bg-white/70 px-3 py-2 text-sm font-medium text-slate-800 ring-1 ring-emerald-200/60">
+                              <span className="mt-1 h-2 w-2 flex-none rounded-full bg-emerald-500" />
+                              <span>{g}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="rounded-xl bg-white/70 px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-emerald-200/60">Not enough signal yet.</li>
+                        )}
                       </ul>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                      <div className="text-xs font-semibold text-slate-600">Bad decisions / leaks</div>
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-700">
-                        {seasonSummary.bad.length ? seasonSummary.bad.map((b) => <li key={b}>{b}</li>) : <li>No obvious leaks detected.</li>}
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-extrabold uppercase tracking-wide text-rose-900">Bad decisions / leaks</div>
+                        <span className="inline-flex items-center rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-semibold text-rose-900 ring-1 ring-rose-200">
+                          Risk
+                        </span>
+                      </div>
+                      <ul className="mt-3 space-y-2">
+                        {seasonSummary.bad.length ? (
+                          seasonSummary.bad.map((b) => (
+                            <li key={b} className="flex gap-3 rounded-xl bg-white/70 px-3 py-2 text-sm font-medium text-slate-800 ring-1 ring-rose-200/60">
+                              <span className="mt-1 h-2 w-2 flex-none rounded-full bg-rose-500" />
+                              <span>{b}</span>
+                            </li>
+                          ))
+                        ) : (
+                          <li className="rounded-xl bg-white/70 px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-rose-200/60">No obvious leaks detected.</li>
+                        )}
                       </ul>
                     </div>
                   </div>
                 </div>
               ) : (
-                <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
-                  {seasonSummary.headline}
-                </div>
+                <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">{seasonSummary.headline}</div>
               )}
             </Panel>
           </section>
@@ -333,9 +385,7 @@ export default async function AnalyzeEntryIdPage({
                   </div>
                 </>
               ) : (
-                <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
-                  Captaincy data is temporarily unavailable.
-                </div>
+                <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">Captaincy data is temporarily unavailable.</div>
               )}
             </Panel>
 
@@ -344,19 +394,14 @@ export default async function AnalyzeEntryIdPage({
                 {Object.keys(profile.chipTiming).length ? (
                   <ul className="space-y-2">
                     {Object.entries(profile.chipTiming).map(([chip, gw]) => (
-                      <li
-                        key={chip}
-                        className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3"
-                      >
+                      <li key={chip} className="flex items-center justify-between rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
                         <span className="font-semibold text-slate-800">{chip}</span>
                         <span className="text-sm font-medium text-slate-600">GW {gw}</span>
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4 text-slate-600">
-                    No chips used yet.
-                  </div>
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4 text-slate-600">No chips used yet.</div>
                 )}
               </div>
             </Panel>
@@ -378,9 +423,7 @@ export default async function AnalyzeEntryIdPage({
             </div>
 
             <Panel title="Risk" subtitle="Heuristic profile summary">
-              <div className="mt-3 text-sm text-slate-600">
-                Composite heuristic based on hits, transfer volume, points volatility, and captain volatility.
-              </div>
+              <div className="mt-3 text-sm text-slate-600">Composite heuristic based on hits, transfer volume, points volatility, and captain volatility.</div>
 
               <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
                 <Metric label="Risk band" value={profile.riskBand} />
@@ -406,9 +449,7 @@ function KpiCard({ title, value, hint }: { title: string; value: string; hint: s
           <div className="text-xs font-semibold text-slate-500">{title}</div>
           <div className="mt-2 text-2xl font-extrabold tracking-tight text-slate-900">{value}</div>
         </div>
-        <div className="rounded-full border border-slate-100 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">
-          {hint}
-        </div>
+        <div className="rounded-full border border-slate-100 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-600">{hint}</div>
       </div>
     </div>
   );
